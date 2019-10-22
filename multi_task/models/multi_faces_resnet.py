@@ -79,24 +79,24 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     #TODO: I don't want to mess with the original 'mask' parameter, although it seems pretty useless
-    def forward(self, x, mask, ignored_filters_per_task):
+    def forward(self, x, mask, ignored_filters_per_layer):
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.layer1(out)
+
         out = self.layer2(out)
+        out[:, ignored_filters_per_layer[-3], :, :] = 0
+
         out = self.layer3(out)
+        out[:, ignored_filters_per_layer[-2], :, :] = 0
+
         out = self.layer4(out)
+        out[:, ignored_filters_per_layer[-1], :, :] = 0
+
         out = F.avg_pool2d(out, 4)
-        # print(out.shape)
 
-        outs = []
-        task_num = len(ignored_filters_per_task)
-        for i in range(task_num):
-            out_cur = out.clone()
-            out_cur[:, ignored_filters_per_task[i], :, :] = 0
-            out_cur = out_cur.view(out_cur.size(0), -1)
-            outs.append(out_cur)
+        out = out.view(out.size(0), -1)
 
-        return outs, mask
+        return out, mask
 
 
 class FaceAttributeDecoder(nn.Module):
