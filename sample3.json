@@ -1,6 +1,6 @@
 {
     "optimizer": "Adam",
-    "batch_size": 128,
+    "batch_size": 170,
     "lr": 0.0005,
     "dataset": "celeba",
     "tasks": ["31", "36"],

@@ -1,11 +1,11 @@
 {
     "optimizer": "Adam",
-    "batch_size": 128,
-    "lr": 0.0005,
+    "batch_size": 170,
+    "lr": 0.0001,
     "dataset": "celeba",
-    "tasks": ["31", "36"],
+    "tasks": ["14", "19"],
     "normalization_type": "none",
     "algorithm": "no smart gradient stuff",
     "use_approximation": true,
-    "scales": {"31":0.5, "36":0.5}
+    "scales": {"14":0.5, "19":0.5}
 }

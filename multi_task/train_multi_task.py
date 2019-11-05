@@ -37,7 +37,6 @@ def get_ignored_filters_per_task_per_layer(ignore_up_to, filter_nums=None, alrea
 
     task_num = 2
     ignored_filter_idx = np.empty((task_num, 0)).tolist()
-    print(ignored_filter_idx)
     for i, filter_num in enumerate(filter_nums):
         if i > ignore_up_to:
             if filter_num in already_calculated_dict:

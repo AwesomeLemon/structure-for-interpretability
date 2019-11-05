@@ -45,15 +45,17 @@ class CELEBA(data.Dataset):
             fl.pop()
             if 'train' in self.split:
                 selected_files = list(filter(lambda x:x.split(' ')[1]=='0', fl))
-            elif 'val' in self.split:
-                selected_files =  list(filter(lambda x:x.split(' ')[1]=='1', fl))
+            elif 'val1' in self.split:
+                selected_files =  list(filter(lambda x:x.split(' ')[1]=='1', fl))[:8000]
+            elif 'val2' in self.split:
+                selected_files =  list(filter(lambda x:x.split(' ')[1]=='1', fl))[8000:]
             elif 'test' in self.split:
                 selected_files =  list(filter(lambda x:x.split(' ')[1]=='2', fl))
             selected_file_names = list(map(lambda x:re.sub('jpg', 'png', x.split(' ')[0]), selected_files))
         
         base_path = '/'.join(self.all_files[0].split('/')[:-1])
-        self.files[self.split] = list(map(lambda x: '/'.join([base_path, x]), set(map(lambda x:x.split('/')[-1], self.all_files)).intersection(set(selected_file_names))))#[:2000]
-        self.labels[self.split] = list(map(lambda x: label_map[x], set(map(lambda x:x.split('/')[-1], self.all_files)).intersection(set(selected_file_names))))#[:2000]
+        self.files[self.split] = list(map(lambda x: '/'.join([base_path, x]), set(map(lambda x:x.split('/')[-1], self.all_files)).intersection(set(selected_file_names))))#[:10000]
+        self.labels[self.split] = list(map(lambda x: label_map[x], set(map(lambda x:x.split('/')[-1], self.all_files)).intersection(set(selected_file_names))))#[:10000]
         self.class_names = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', 'Bags_Under_Eyes', 'Bald', 'Bangs',
                                 'Big_Lips', 'Big_Nose', 'Black_Hair', 'Blond_Hair', 'Blurry', 'Brown_Hair', 'Bushy_Eyebrows',      
                                 'Chubby', 'Double_Chin', 'Eyeglasses', 'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'High_Cheekbones',       
