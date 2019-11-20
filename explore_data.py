@@ -3,9 +3,11 @@ import pandas as pd
 from matplotlib import pyplot as plt
 
 df = pd.read_csv('list_attr_celeba.txt', sep='\s+', skiprows=1)
+print(list(zip(range(40), df.columns.values)))
 corr_matrix = df.corr()
 
 mask = np.tri(corr_matrix.shape[0], k=-1)
+mask[(corr_matrix < 0.2) & (corr_matrix > -0.2)] = 1
 corr_matrix = np.ma.array(corr_matrix, mask=mask)
 f = plt.figure(figsize=(19, 15))
 plt.matshow(corr_matrix, fignum=f.number, vmin=-1, vmax=1, cmap='rainbow')

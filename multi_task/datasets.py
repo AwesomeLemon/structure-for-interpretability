@@ -34,12 +34,12 @@ def get_dataset(params, configs):
 
     if 'celeba' in params['dataset']:
         train_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='train', img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']), augmentations=None)
-        val1_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='val1', img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']), augmentations=None)
-        val2_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='val2',
-                          img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']), augmentations=None)
+        train2_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='train2',img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']), augmentations=None)
+        val1_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='val', img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']), augmentations=None)
 
         train_loader = torch.utils.data.DataLoader(train_dst, batch_size=params['batch_size'], shuffle=True, num_workers=4)
-        val1_loader = torch.utils.data.DataLoader(val1_dst, batch_size=params['batch_size'], num_workers=4, shuffle=False)
+        train2_loader = torch.utils.data.DataLoader(train2_dst, batch_size=params['batch_size'], shuffle=True,num_workers=4)
+        val_loader = torch.utils.data.DataLoader(val1_dst, batch_size=params['batch_size'], num_workers=4, shuffle=False)
         # val2_loader = torch.utils.data.DataLoader(val2_dst, batch_size=params['batch_size'], num_workers=4,
         #                                           shuffle=True)
-        return train_loader, val1_loader, val2_dst
+        return train_loader, val_loader, train2_loader

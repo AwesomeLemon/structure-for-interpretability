@@ -64,7 +64,7 @@ def get_complimenting_filters(ignored_filter_idx, filter_num):
 
 
 @click.command()
-@click.option('--param_file', default='sample.json', help='JSON parameters file')
+@click.option('--param_file', default='sample_all.json', help='JSON parameters file')
 def train_multi_task(param_file):
     # print(get_ignored_filters_per_layer_per_task())
 
@@ -87,8 +87,8 @@ def train_multi_task(param_file):
     params['exp_id'] = exp_identifier
 
     log_dir_name = '/mnt/antares_raid/home/awesomelemon/runs6/{}_{}'.format(params['exp_id'],
-                                                               datetime.datetime.now().strftime(
-                                                                   "%I:%M%p on %B %d, %Y"))
+                                                                            datetime.datetime.now().strftime(
+                                                                                "%I:%M%p on %B %d, %Y"))
     log_dir_name = re.sub(r'\s+', '_', log_dir_name)
     log_dir_name = re.sub(r"'", '_', log_dir_name)
     log_dir_name = re.sub(r'"', '_', log_dir_name)
@@ -97,13 +97,13 @@ def train_multi_task(param_file):
     print(log_dir_name)
 
     if len(log_dir_name) > 255:
-        log_dir_name = '/mnt/antares_raid/home/awesomelemon/runs6/{}'.format(datetime.datetime.now().strftime("%I_%M%p_on_%B_%d_%Y"))
+        log_dir_name = '/mnt/antares_raid/home/awesomelemon/runs6/{}'.format(
+            datetime.datetime.now().strftime("%I_%M%p_on_%B_%d_%Y"))
+
+    print(f'Log dir: {log_dir_name}')
     writer = SummaryWriter(log_dir=log_dir_name)
 
-    train_loader, val1_loader, val2_dst = datasets.get_dataset(params, configs)
-    val2_loader = torch.utils.data.DataLoader(
-        val2_dst, batch_size=params['batch_size'], num_workers=4, shuffle=True)
-
+    train_loader, val_loader, train2_loader = datasets.get_dataset(params, configs)
 
     loss_fn = losses.get_loss(params)
     metric = metrics.get_metrics(params)
@@ -127,10 +127,21 @@ def train_multi_task(param_file):
 
     if 'Adam' in params['optimizer']:
         optimizer = torch.optim.Adam(model_params, lr=params['lr'])
+        # # right now, optimize all, may just as well pass "model['rep'].lin_coeffs_id_zero":
+        # lst = [model['rep'].lin_coeffs_id_zero[-1], model['rep'].lin_coeffs_id_zero[-2],
+        #        model['rep'].lin_coeffs_id_zero[-3]]
+        # optimizer_val = torch.optim.Adam(lst, lr=params['lr'])
+    elif 'SGD' in params['optimizer']:
+        optimizer = torch.optim.SGD(model_params, lr=params['lr'], momentum=0.9)
 
-        #right now, optimize all, may just as well pass "model['rep'].lin_coeffs_id_zero":
-        lst = [model['rep'].lin_coeffs_id_zero[-1], model['rep'].lin_coeffs_id_zero[-2], model['rep'].lin_coeffs_id_zero[-3]]
-        optimizer_val = torch.optim.Adam(lst, lr=params['lr'])
+    # right now, optimize all, may just as well pass "model['rep'].lin_coeffs_id_zero":
+    lst = [model['rep'].lin_coeffs_id_zero[-1]
+        # , model['rep'].lin_coeffs_id_zero[-2],
+        #    model['rep'].lin_coeffs_id_zero[-3]
+           ]
+    optimizer_val = torch.optim.SGD(lst, lr=0.01, momentum=0.)
+
+    train2_loader_iter = iter(train2_loader)
 
     for epoch in range(NUM_EPOCHS):
         start = timer()
@@ -145,11 +156,7 @@ def train_multi_task(param_file):
         for m in model:
             model[m].train()
 
-
         for batch_idx, batch in enumerate(train_loader):
-            # if batch_idx % (math.ceil(8000./10000. * 100)) == 0:
-            if batch_idx % 80 == 0:
-                iter_val_loader = iter(val2_loader)
 
             print(n_iter)
             n_iter += 1
@@ -164,32 +171,40 @@ def train_multi_task(param_file):
                     labels[t] = Variable(labels[t].cuda())
                 return labels
 
-            # 1. Gradient step for connectivity variables using one batch from the validation set:
+            if True:  # epoch % 2 == 0:
+                # 1. Gradient step for connectivity variables using one batch from the validation set:
 
-            # get a random minibatch from the search queue with replacement
-            batch_val = next(iter_val_loader)
+                # get a random minibatch from the search queue with replacement
+                batch_val = next(train2_loader_iter, None)
 
-            images_val = batch_val[0]
-            images_val = Variable(images_val.cuda())
-            labels_val = get_desired_labels_from_batch(batch_val)
+                if batch_val is None:
+                    print('Recreating train2 loader')
+                    train2_loader_iter = iter(train2_loader)
+                    batch_val = next(train2_loader_iter)
 
-            scale = {}
-            for t in tasks:
-                scale[t] = float(params['scales'][t])
+                images_val = batch_val[0]
+                images_val = Variable(images_val.cuda())
+                labels_val = get_desired_labels_from_batch(batch_val)
 
-            loss = 0
-            optimizer_val.zero_grad()
-            reps, _ = model['rep'](images_val, None)
-            for i, t in enumerate(tasks):
-                rep = reps[i]
-                out_t, _ = model[t](rep, None)
-                loss_t = loss_fn[t](out_t, labels_val[t])
-                if i > 0:
-                    loss = loss + scale[t] * loss_t
-                else:
-                    loss = scale[t] * loss_t
-            loss.backward()
-            optimizer_val.step()
+                scale = {}
+                for t in tasks:
+                    scale[t] = float(params['scales'][t])
+
+                loss = 0
+                optimizer_val.zero_grad()
+                reps, _ = model['rep'](images_val, None)
+                for i, t in enumerate(tasks):
+                    rep = reps[i]
+                    out_t, _ = model[t](rep, None)
+                    loss_t = loss_fn[t](out_t, labels_val[t])
+                    if i > 0:
+                        loss = loss + scale[t] * loss_t
+                    else:
+                        loss = scale[t] * loss_t
+                loss.backward()
+                optimizer_val.step()
+
+                writer.add_scalar('training2_loss', loss.item(), n_iter)
 
             # 2. Gradient step for normal weights using one batch from the training set:
 
@@ -235,7 +250,7 @@ def train_multi_task(param_file):
 
         num_val_batches = 0
         with torch.no_grad():
-            for batch_val in val1_loader:
+            for batch_val in val_loader:
                 val_images = Variable(batch_val[0].cuda())
                 labels_val = {}
 
@@ -245,8 +260,8 @@ def train_multi_task(param_file):
                     labels_val[t] = batch_val[i + 1]
                     labels_val[t] = Variable(labels_val[t].cuda())
 
+                val_reps, _ = model['rep'](val_images, None)
                 for i, t in enumerate(tasks):
-                    val_reps, _ = model['rep'](val_images, None)
                     val_rep = val_reps[i]
                     out_t_val, _ = model[t](val_rep, None)
                     loss_t = loss_fn[t](out_t_val, labels_val[t])
@@ -258,40 +273,40 @@ def train_multi_task(param_file):
                     # print(metric[t].get_result())
                 num_val_batches += 1
 
+        error_sum = 0
         for t in tasks:
             writer.add_scalar('validation_loss_{}'.format(t), tot_loss[t] / num_val_batches, n_iter)
             metric_results = metric[t].get_result()
             for metric_key in metric_results:
                 # pass
                 writer.add_scalar('metric_{}_{}'.format(metric_key, t), metric_results[metric_key], n_iter)
+                error_sum += 1 - metric_results[metric_key]
+
             metric[t].reset()
+
+        error_sum /= float(len(tasks))
+        writer.add_scalar('average_error', error_sum * 100, n_iter)
 
         writer.add_scalar('validation_loss', tot_loss['all'] / num_val_batches / len(tasks), n_iter)
 
-        #log scales
-        # coeffs = list(model['rep'].lin_coeffs_id_zero[-1][:, 0].cpu().detach())
-        # coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
-        # writer.add_scalars('learning_scales_1', coeffs, n_iter)
+        # write scales to log
 
-        coeffs = list(torch.sigmoid(5. * model['rep'].lin_coeffs_id_zero[-1][:, 0]).cpu().detach()/ 500.)
-        coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
-        writer.add_scalars('learning_scales_3_0_sigmoid', coeffs, n_iter)
+        sigmoid_normalization = 1.  # 250.
+        for i in range(40):
+            coeffs = list(
+                torch.sigmoid(5. * model['rep'].lin_coeffs_id_zero[-1][:, i]).cpu().detach() / sigmoid_normalization)
+            coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
+            writer.add_scalars(f'learning_scales_3_{i}_sigmoid', coeffs, n_iter)
 
-        # coeffs = list(model['rep'].lin_coeffs_id_zero[-1][:, 1].cpu().detach())
-        # coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
-        # writer.add_scalars('learning_scales_2', coeffs, n_iter)
-
-        coeffs = list(torch.sigmoid(5. * model['rep'].lin_coeffs_id_zero[-1][:, 1]).cpu().detach()/ 500.)
-        coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
-        writer.add_scalars('learning_scales_3_1_sigmoid', coeffs, n_iter)
-
-        for i in range(4):
-            coeffs = list(torch.sigmoid(5. * model['rep'].lin_coeffs_id_zero[-2][:, i]).cpu().detach() / 500.)
+        for i in range(model['rep'].num_automl_blocks4):
+            coeffs = list(
+                torch.sigmoid(5. * model['rep'].lin_coeffs_id_zero[-2][:, i]).cpu().detach() / sigmoid_normalization)
             coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
             writer.add_scalars(f'learning_scales_2_{i}_sigmoid', coeffs, n_iter)
 
-        for i in range(4):
-            coeffs = list(torch.sigmoid(5. * model['rep'].lin_coeffs_id_zero[-3][:, i]).cpu().detach() / 500.)
+        for i in range(model['rep'].num_automl_blocks3):
+            coeffs = list(
+                torch.sigmoid(5. * model['rep'].lin_coeffs_id_zero[-3][:, i]).cpu().detach() / sigmoid_normalization)
             coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
             writer.add_scalars(f'learning_scales_1_{i}_sigmoid', coeffs, n_iter)
 
