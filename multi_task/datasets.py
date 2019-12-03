@@ -43,3 +43,18 @@ def get_dataset(params, configs):
         # val2_loader = torch.utils.data.DataLoader(val2_dst, batch_size=params['batch_size'], num_workers=4,
         #                                           shuffle=True)
         return train_loader, val_loader, train2_loader
+
+#DANGER! TEST SET SHOULD NOT BE USED UNLESS IN EMERGENCY
+def get_test_dataset(params, configs):
+    if 'dataset' not in params:
+        print('ERROR: No dataset is specified')
+
+    if 'celeba' in params['dataset']:
+        test_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='test',
+                           img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']),
+                           augmentations=None)
+
+        test_loader = torch.utils.data.DataLoader(test_dst, batch_size=params['batch_size'], num_workers=4,
+                                                 shuffle=False)
+
+        return test_loader

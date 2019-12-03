@@ -1,4 +1,5 @@
 import click
+import os
 import math
 import json
 import datetime
@@ -19,6 +20,7 @@ import random
 import re
 
 import model_selector_automl
+from shutil import copy
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -86,9 +88,9 @@ def train_multi_task(param_file):
     exp_identifier = '|'.join(exp_identifier)
     params['exp_id'] = exp_identifier
 
-    log_dir_name = '/mnt/antares_raid/home/awesomelemon/runs6/{}_{}'.format(params['exp_id'],
-                                                                            datetime.datetime.now().strftime(
-                                                                                "%I:%M%p on %B %d, %Y"))
+    time_str = datetime.datetime.now().strftime("%H_%M_on_%B_%d")
+    log_dir_name = '/mnt/antares_raid/home/awesomelemon/runs7/{}_{}'.format(params['exp_id'],
+                                                                            time_str)
     log_dir_name = re.sub(r'\s+', '_', log_dir_name)
     log_dir_name = re.sub(r"'", '_', log_dir_name)
     log_dir_name = re.sub(r'"', '_', log_dir_name)
@@ -97,8 +99,8 @@ def train_multi_task(param_file):
     print(log_dir_name)
 
     if len(log_dir_name) > 255:
-        log_dir_name = '/mnt/antares_raid/home/awesomelemon/runs6/{}'.format(
-            datetime.datetime.now().strftime("%I_%M%p_on_%B_%d_%Y"))
+        log_dir_name = '/mnt/antares_raid/home/awesomelemon/runs7/{}'.format(
+            time_str)
 
     print(f'Log dir: {log_dir_name}')
     writer = SummaryWriter(log_dir=log_dir_name)
@@ -123,7 +125,7 @@ def train_multi_task(param_file):
         # 64, #ignore 64: we want at least 1 layer to be shared
         128, 256, 512]
 
-    NUM_EPOCHS = 40
+    NUM_EPOCHS = 50
 
     if 'Adam' in params['optimizer']:
         optimizer = torch.optim.Adam(model_params, lr=params['lr'])
@@ -139,7 +141,7 @@ def train_multi_task(param_file):
         # , model['rep'].lin_coeffs_id_zero[-2],
         #    model['rep'].lin_coeffs_id_zero[-3]
            ]
-    optimizer_val = torch.optim.SGD(lst, lr=0.01, momentum=0.)
+    optimizer_val = torch.optim.SGD(lst, lr=0.1, momentum=0.9)
 
     train2_loader_iter = iter(train2_loader)
 
@@ -171,7 +173,7 @@ def train_multi_task(param_file):
                     labels[t] = Variable(labels[t].cuda())
                 return labels
 
-            if True:  # epoch % 2 == 0:
+            if True:
                 # 1. Gradient step for connectivity variables using one batch from the validation set:
 
                 # get a random minibatch from the search queue with replacement
@@ -292,21 +294,22 @@ def train_multi_task(param_file):
         # write scales to log
 
         sigmoid_normalization = 1.  # 250.
+        sigmoid_internal_multiple = 1.
         for i in range(40):
             coeffs = list(
-                torch.sigmoid(5. * model['rep'].lin_coeffs_id_zero[-1][:, i]).cpu().detach() / sigmoid_normalization)
+                torch.sigmoid(sigmoid_internal_multiple * model['rep'].lin_coeffs_id_zero[-1][:, i]).cpu().detach() / sigmoid_normalization)
             coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
             writer.add_scalars(f'learning_scales_3_{i}_sigmoid', coeffs, n_iter)
 
         for i in range(model['rep'].num_automl_blocks4):
             coeffs = list(
-                torch.sigmoid(5. * model['rep'].lin_coeffs_id_zero[-2][:, i]).cpu().detach() / sigmoid_normalization)
+                torch.sigmoid(sigmoid_internal_multiple * model['rep'].lin_coeffs_id_zero[-2][:, i]).cpu().detach() / sigmoid_normalization)
             coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
             writer.add_scalars(f'learning_scales_2_{i}_sigmoid', coeffs, n_iter)
 
         for i in range(model['rep'].num_automl_blocks3):
             coeffs = list(
-                torch.sigmoid(5. * model['rep'].lin_coeffs_id_zero[-3][:, i]).cpu().detach() / sigmoid_normalization)
+                torch.sigmoid(sigmoid_internal_multiple * model['rep'].lin_coeffs_id_zero[-3][:, i]).cpu().detach() / sigmoid_normalization)
             coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
             writer.add_scalars(f'learning_scales_1_{i}_sigmoid', coeffs, n_iter)
 
@@ -314,18 +317,37 @@ def train_multi_task(param_file):
             # Save after every 3 epoch
             state = {'epoch': epoch + 1,
                      'model_rep': model['rep'].state_dict(),
-                     'optimizer_state': optimizer.state_dict()}
+                     'optimizer_state': optimizer.state_dict(),
+                     'learning_scales0': model['rep'].lin_coeffs_id_zero[0].data,
+                     'learning_scales1': model['rep'].lin_coeffs_id_zero[1].data,
+                     'learning_scales2': model['rep'].lin_coeffs_id_zero[2].data,}
             for t in tasks:
                 key_name = 'model_{}'.format(t)
                 state[key_name] = model[t].state_dict()
 
-            save_model_path = "/mnt/raid/data/chebykin/saved_models/{}_{}_model.pkl".format(params['exp_id'],
-                                                                                            epoch + 1)
+            saved_models_prefix = '/mnt/raid/data/chebykin/saved_models/{}'.format(time_str)
+            if not os.path.exists(saved_models_prefix):
+                os.makedirs(saved_models_prefix)
+
+            save_model_path = saved_models_prefix + "/{}_{}_model.pkl".format(params['exp_id'], epoch + 1)
+            save_model_path = re.sub(r'\s+', '_', save_model_path)
+            save_model_path = re.sub(r"'", '_', save_model_path)
+            save_model_path = re.sub(r'"', '_', save_model_path)
+            save_model_path = re.sub(r':', '_', save_model_path)
+            save_model_path = re.sub(r',', '|', save_model_path)
             if len(save_model_path) > 255:
-                save_model_path = "/mnt/raid/data/chebykin/saved_models/" + "{}".format(params['exp_id'])[
-                                                                            :200] + "_{}_model.pkl".format(
-                    epoch + 1)
+                save_model_path = saved_models_prefix + "/{}".format(params['exp_id'])[
+                                                                            :200] + "_{}_model.pkl".format(epoch + 1)
+                save_model_path = re.sub(r'\s+', '_', save_model_path)
+                save_model_path = re.sub(r"'", '_', save_model_path)
+                save_model_path = re.sub(r'"', '_', save_model_path)
+                save_model_path = re.sub(r':', '_', save_model_path)
+                save_model_path = re.sub(r',', '|', save_model_path)
             torch.save(state, save_model_path)
+
+            if epoch == 0:
+                #to properly restore model, we need source code for it
+                copy('multi_task/models/my_multi_faces_resnet.py', saved_models_prefix)
 
         writer.flush()
 

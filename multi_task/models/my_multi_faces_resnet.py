@@ -70,7 +70,7 @@ class ResNetSeparated(nn.Module):
         self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2, if_separate=False, separate_chunks_num=4)
         self.num_automl_blocks2 = 1
         # self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2, if_separate=False, separate_chunks_num=4)
-        self.layer3 = []
+        self.layer3 = nn.ModuleList()
         self.num_automl_blocks3 = 1
         for i in range(self.num_automl_blocks3):
             cur = self._make_layer(block, 256 // self.num_automl_blocks3, num_blocks[2], stride=2, if_separate=False, separate_chunks_num=4) # should increase dim only after this whole layer is done
@@ -79,8 +79,8 @@ class ResNetSeparated(nn.Module):
 
         self.in_planes = 256
         # self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2, if_separate=False, separate_chunks_num=4)
-        self.layer4 = []
-        self.num_automl_blocks4 = 16
+        self.layer4 = nn.ModuleList()
+        self.num_automl_blocks4 = 8
         for i in range(self.num_automl_blocks4):
             cur = self._make_layer(block, 512 // self.num_automl_blocks4, num_blocks[3], stride=2, if_separate=False, separate_chunks_num=4)
             self.in_planes = 256
@@ -97,13 +97,13 @@ class ResNetSeparated(nn.Module):
         # chunk_strengths_2 = torch.nn.Parameter(- torch.rand((8, 40), requires_grad=True).cuda())
         # self.lin_coeffs_id_zero.append(chunk_strengths_2)
 
-        chunk_strengths_0 = torch.nn.Parameter(0.9 * torch.ones((self.num_automl_blocks2, self.num_automl_blocks3), requires_grad=True).cuda()) # number of chunks before, number of chunks after, id+zero
+        chunk_strengths_0 = torch.nn.Parameter(0.4 * torch.ones((self.num_automl_blocks2, self.num_automl_blocks3), requires_grad=True).cuda()) # number of chunks before, number of chunks after, id+zero
         self.lin_coeffs_id_zero.append(chunk_strengths_0)
 
-        chunk_strengths_1 = torch.nn.Parameter(0.9 * torch.ones((self.num_automl_blocks3, self.num_automl_blocks4), requires_grad=True).cuda())
+        chunk_strengths_1 = torch.nn.Parameter(0.4 * torch.ones((self.num_automl_blocks3, self.num_automl_blocks4), requires_grad=True).cuda())
         self.lin_coeffs_id_zero.append(chunk_strengths_1)
 
-        chunk_strengths_2 = torch.nn.Parameter(0.9 * torch.ones((self.num_automl_blocks4, 40), requires_grad=True).cuda())
+        chunk_strengths_2 = torch.nn.Parameter(0.4 * torch.ones((self.num_automl_blocks4, 40), requires_grad=True).cuda())
         self.lin_coeffs_id_zero.append(chunk_strengths_2)
 
         if_optimize_strenghts_separately = True
@@ -135,11 +135,12 @@ class ResNetSeparated(nn.Module):
 
         curs = out.split(128 // self.num_automl_blocks2, dim=1)
         outs = []
+        sigmoid_internal_multiple = 1.
         for j in range(self.num_automl_blocks3):  # o == number of chunks in the next layer
             cur_outs = []
             for i, cur in enumerate(curs):
                 cur_outs.append(
-                    cur * torch.sigmoid(5. * self.lin_coeffs_id_zero[0][i, j]) / sigmoid_normalization)
+                    cur * torch.sigmoid(sigmoid_internal_multiple * self.lin_coeffs_id_zero[0][i, j]) / sigmoid_normalization)
             cur_outs_concat = torch.cat(cur_outs, 1)
             outs.append(cur_outs_concat)
 
@@ -159,7 +160,7 @@ class ResNetSeparated(nn.Module):
             cur_outs = []
             for i, cur in enumerate(curs):
                 cur_outs.append(
-                    cur * torch.sigmoid(5. * self.lin_coeffs_id_zero[1][i, j]) / sigmoid_normalization)
+                    cur * torch.sigmoid(sigmoid_internal_multiple * self.lin_coeffs_id_zero[1][i, j]) / sigmoid_normalization)
             cur_outs_concat = torch.cat(cur_outs, 1)
             outs.append(cur_outs_concat)
 
@@ -171,7 +172,7 @@ class ResNetSeparated(nn.Module):
             cur_outs = []
             for i, cur in enumerate(curs):
                 cur_outs.append(
-                    cur * torch.sigmoid(5. * self.lin_coeffs_id_zero[2][i, j]) / sigmoid_normalization)#+ cur * self.lin_coeffs_id_zero[2][i, j, 1] * 0)
+                    cur * torch.sigmoid(sigmoid_internal_multiple * self.lin_coeffs_id_zero[2][i, j]) / sigmoid_normalization)#+ cur * self.lin_coeffs_id_zero[2][i, j, 1] * 0)
             cur_outs_concat = torch.cat(cur_outs, 1)
             outs.append(cur_outs_concat)
 
