@@ -6,7 +6,7 @@ def get_model(params):
 
     if 'celeba' in data:
         model = {}
-        model['rep'] = ResNetSeparated(BasicBlock, [2,2,2,2])
+        model['rep'] = ResNetSeparated(BasicBlock, [2,2,2,2], params['chunks'])
         model['rep'].cuda()
         for t in params['tasks']:
             model[t] = FaceAttributeDecoder()
