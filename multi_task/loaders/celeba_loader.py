@@ -44,14 +44,14 @@ class CELEBA(data.Dataset):
             fl = f.read().split('\n')
             fl.pop()
             if 'train' in self.split:
-                selected_files = list(filter(lambda x:x.split(' ')[1]=='0', fl))
+                selected_files = list(filter(lambda x:x.split(' ')[1]=='0', fl))#[:1000]
                 # selected_files = selected_files[:int(len(selected_files) * (0.9))]
             if 'train2' in self.split:
                 raise NotImplementedError('train2 is currently unavailable')
                 # selected_files = list(filter(lambda x: x.split(' ')[1] == '0', fl))
                 # selected_files = selected_files[int(len(selected_files) * (0.9)):]
             elif 'val' in self.split:
-                selected_files =  list(filter(lambda x:x.split(' ')[1]=='1', fl))
+                selected_files =  list(filter(lambda x:x.split(' ')[1]=='1', fl))#[:100]
             elif 'test' in self.split:
                 selected_files =  list(filter(lambda x:x.split(' ')[1]=='2', fl))
             selected_file_names = list(map(lambda x:re.sub('jpg', 'png', x.split(' ')[0]), selected_files))

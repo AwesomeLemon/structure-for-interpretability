@@ -1,6 +1,6 @@
 # Adapted from: https://github.com/pytorch/vision/blob/master/torchvision/models/resnet.py
 
-import torch 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
@@ -28,11 +28,7 @@ class BasicBlock(nn.Module):
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)),
                                   inplace=True)
-        #TODO: DANGER!!! proper version:
-        # out = self.bn2(self.conv2(out))
-        # out += self.shortcut(x)
         out = self.conv2(out)
-        out += self.shortcut(x)
         out = self.bn2(out)
         #above is the improper version
 
@@ -42,16 +38,16 @@ class BasicBlock(nn.Module):
             #otherwise, I'll apply ReLu myself outside after multiplying by my coefficients
         return out
 
-class ResNetSeparated(nn.Module):
-    def __init__(self, block, num_blocks, num_chunks, num_classes=10):
-        super(ResNetSeparated, self).__init__()
+class PlainNet(nn.Module):
+    def __init__(self, block, num_blocks, num_chunks):
+        super(PlainNet, self).__init__()
         self.in_planes = 64
 
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1, if_separate=False, separate_chunks_num=None, enforce_affine=True)
-        #TODO: don't need to enforce affine here if number of blocks != 1
-        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2, if_separate=False, separate_chunks_num=4)
+        #TODO: stride was 2 for 64x64, changed to 1 for 32x32
+        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=1, if_separate=False, separate_chunks_num=4)
         self.num_automl_blocks2 = num_chunks[0]#16
         #WRONG: we don't need true batch norms, we need 1 gamma and 1 beta per block pair
         # self.layer2_batch_norms = nn.ModuleList()
@@ -259,16 +255,3 @@ class FaceAttributeDecoder(nn.Module):
         x = self.linear(x)
         out = F.log_softmax(x, dim=1)
         return out, mask
-
-#TODO:
-# class FaceAttributeDecoder(nn.Module):
-#     def __init__(self):
-#         super(FaceAttributeDecoder, self).__init__()
-#         self.linear1 = nn.Linear(2048, 32)
-#         self.linear2 = nn.Linear(32, 2)
-#
-#     def forward(self, x, mask):
-#         x = F.relu(self.linear1(x))
-#         x = self.linear2(x)
-#         out = F.log_softmax(x, dim=1)
-#         return out, mask

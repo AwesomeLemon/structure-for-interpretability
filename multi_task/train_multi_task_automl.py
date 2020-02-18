@@ -69,8 +69,7 @@ def get_complimenting_filters(ignored_filter_idx, filter_num):
 
 
 @click.command()
-# @click.option('--param_file', default='sample_all_very_small_reg.json', help='JSON parameters file')
-@click.option('--param_file', default='params/big_reg_8_8_8.json', help='JSON parameters file')
+@click.option('--param_file', default='params/sgd_small_reg_4_4_4.json', help='JSON parameters file')
 def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = None, overwrite_weight_decay=None):
     if_continue_training = False
     if if_continue_training:
@@ -83,6 +82,8 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
     # ignored_filters_per_task = get_ignored_filters_per_task()
     # print(sorted(ignored_filters_per_task[0]))
     # print(sorted(ignored_filters_per_task[1]))
+
+    # with open('configs_smaller_img.json') as config_params:
     with open('configs.json') as config_params:
         configs = json.load(config_params)
 
@@ -126,6 +127,7 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
     tasks = params['tasks']
     all_tasks = configs[params['dataset']]['all_tasks']
     model = model_selector_automl.get_model(params)
+    # model = model_selector_plainnet.get_model(params)
 
     if if_continue_training:
         model['rep'].load_state_dict(state['model_rep'])
