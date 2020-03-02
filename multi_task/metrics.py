@@ -1,6 +1,7 @@
 # Adapted from: https://github.com/meetshah1995/pytorch-semseg/blob/master/ptsemseg/metrics.py
 
-from losses import l1_loss_instance
+# from multi_task.losses import l1_loss_instance
+# from multi_task.losses import l1_loss_instance
 import numpy as np
 
 class RunningMetric(object):

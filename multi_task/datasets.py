@@ -2,6 +2,7 @@ import torch
 from torchvision import transforms
 # from loaders.segmentation_augmentations import *
 from loaders.celeba_loader import CELEBA
+# from multi_task.loaders.celeba_loader import CELEBA
 
 # Setup Augmentations
 # cityscapes_augmentations= Compose([RandomRotate(10),

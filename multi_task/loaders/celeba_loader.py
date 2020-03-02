@@ -99,7 +99,7 @@ class CELEBA(data.Dataset):
         img = img[:, :, ::-1]
         img = img.astype(np.float64)
         img -= self.mean
-        img = skimage.transform.resize(img, (self.img_size[0], self.img_size[1]))
+        img = skimage.transform.resize(img, (self.img_size[0], self.img_size[1]), order=3)
         # Resize scales images from 0 to 255, thus we need
         # to divide by 255.0
         img = img.astype(float) / 255.0

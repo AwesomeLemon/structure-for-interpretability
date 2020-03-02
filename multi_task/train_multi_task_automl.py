@@ -1,6 +1,4 @@
 import click
-import os
-import math
 import json
 import datetime
 from timeit import default_timer as timer
@@ -8,6 +6,7 @@ from timeit import default_timer as timer
 import numpy as np
 
 import torch
+
 torch.multiprocessing.set_sharing_strategy('file_system')
 from torch.autograd import Variable
 
@@ -22,67 +21,15 @@ import re
 
 import model_selector_automl
 from shutil import copy
+import os
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-import os
-# os.system("ulimit -n 8192")
-os.system('ulimit -Sn')
-def get_ignored_filters_per_task_per_layer(ignore_up_to, filter_nums=None, already_calculated_dict={}):
-    # to avoid mutable default argument
-    if filter_nums is None:
-        filter_nums = [
-            # 64, #ignore 64: we want at least 1 layer to be shared
-            128, 256, 512]
-
-    task_num = 2
-    ignored_filter_idx = np.empty((task_num, 0)).tolist()
-    for i, filter_num in enumerate(filter_nums):
-        if i > ignore_up_to:
-            if filter_num in already_calculated_dict:
-                cur_ignored_filter_idx1 = already_calculated_dict[filter_num]
-            else:
-                cur_ignored_filter_idx1 = get_ignored_filters_per_layer(filter_num, filter_num // 2)
-                already_calculated_dict[filter_num] = cur_ignored_filter_idx1
-
-            cur_ignored_filter_idx2 = get_complimenting_filters(cur_ignored_filter_idx1, filter_num)
-        else:
-            cur_ignored_filter_idx1 = cur_ignored_filter_idx2 = []
-        ignored_filter_idx[0].append(cur_ignored_filter_idx1)
-        ignored_filter_idx[1].append(cur_ignored_filter_idx2)
-
-    print(ignored_filter_idx)
-    return ignored_filter_idx
-
-
-# def get_ignored_filters_per_task(filter_num=512, filters_to_ignore=256):
-#     ignored_filter_idx = random.sample(range(filter_num), filters_to_ignore)
-#     return [ignored_filter_idx, list(set(range(filter_num)) - set(ignored_filter_idx))]
-
-def get_ignored_filters_per_layer(filter_num=512, filters_to_ignore=256):
-    ignored_filter_idx = random.sample(range(filter_num), filters_to_ignore)
-    return ignored_filter_idx  # range(filter_num)
-
-
-def get_complimenting_filters(ignored_filter_idx, filter_num):
-    return list(set(range(filter_num)) - set(ignored_filter_idx))
-
 
 @click.command()
-@click.option('--param_file', default='params/sgd_small_reg_4_4_4.json', help='JSON parameters file')
-def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = None, overwrite_weight_decay=None):
-    if_continue_training = False
-    if if_continue_training:
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_10_on_December_06/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3_4_model.pkl'
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_04_on_December_10/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|___5_model.pkl'
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_10_on_December_11/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3_10_model.pkl'
-        state = torch.load(save_model_path)
-    # print(get_ignored_filters_per_layer_per_task())
-
-    # ignored_filters_per_task = get_ignored_filters_per_task()
-    # print(sorted(ignored_filters_per_task[0]))
-    # print(sorted(ignored_filters_per_task[1]))
-
+# @click.option('--param_file', default='old_params/sample_all.json', help='JSON parameters file')
+@click.option('--param_file', default='params/very_big_reg_8_8_8.json', help='JSON parameters file')
+def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, overwrite_weight_decay=None):
     # with open('configs_smaller_img.json') as config_params:
     with open('configs.json') as config_params:
         configs = json.load(config_params)
@@ -90,33 +37,39 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
     with open(param_file) as json_params:
         params = json.load(json_params)
 
-    exp_identifier = []
-    for (key, val) in params.items():
-        if 'tasks' in key:
-            continue
-        exp_identifier += ['{}={}'.format(key, val)]
+    def get_log_dir_name(params):
+        exp_identifier = []
+        for (key, val) in params.items():
+            if 'tasks' in key or 'scales' in key:
+                continue
+            exp_identifier += ['{}={}'.format(key, val)]
 
-    exp_identifier = '|'.join(exp_identifier)
-    params['exp_id'] = exp_identifier
+        exp_identifier = '|'.join(exp_identifier)
+        params['exp_id'] = exp_identifier
 
-    if_debug = False
-    run_dir_name = 'runs_debug' if if_debug else 'runs9'
-    time_str = datetime.datetime.now().strftime("%H_%M_on_%B_%d")
-    log_dir_name = '/mnt/antares_raid/home/awesomelemon/{}/{}_{}'.format(run_dir_name,
-                                                                         params['exp_id'],
-                                                                            time_str)
-    log_dir_name = re.sub(r'\s+', '_', log_dir_name)
-    log_dir_name = re.sub(r"'", '_', log_dir_name)
-    log_dir_name = re.sub(r'"', '_', log_dir_name)
-    log_dir_name = re.sub(r':', '_', log_dir_name)
-    log_dir_name = re.sub(r',', '|', log_dir_name)
-    print(log_dir_name)
+        if_debug = False
+        run_dir_name = 'runs_debug' if if_debug else 'runs9'
+        time_str = datetime.datetime.now().strftime("%H_%M_on_%B_%d")
+        log_dir_name = '/mnt/antares_raid/home/awesomelemon/{}/{}'.format(run_dir_name, time_str)
+        def print_proper_log_dir_name():
+            log_dir_name_full = '/mnt/antares_raid/home/awesomelemon/{}/{}_{}'.format(run_dir_name, params['exp_id'], time_str)
+            log_dir_name_full = re.sub(r'\s+', '_', log_dir_name_full)
+            log_dir_name_full = re.sub(r"'", '_', log_dir_name_full)
+            log_dir_name_full = re.sub(r'"', '_', log_dir_name_full)
+            log_dir_name_full = re.sub(r':', '_', log_dir_name_full)
+            log_dir_name_full = re.sub(r',', '|', log_dir_name_full)
+            print(log_dir_name_full)
 
-    if len(log_dir_name) > 255:
-        log_dir_name = '/mnt/antares_raid/home/awesomelemon/{}/{}'.format(run_dir_name,
-            time_str)
+        print_proper_log_dir_name()
+        #
+        # if len(log_dir_name) > 255:
+        #     log_dir_name = '/mnt/antares_raid/home/awesomelemon/{}/{}'.format(run_dir_name, time_str)
 
+        return log_dir_name, time_str
+
+    log_dir_name, time_str = get_log_dir_name(params)
     print(f'Log dir: {log_dir_name}')
+
     writer = SummaryWriter(log_dir=log_dir_name)
 
     train_loader, val_loader, train2_loader = datasets.get_dataset(params, configs)
@@ -126,10 +79,19 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
 
     tasks = params['tasks']
     all_tasks = configs[params['dataset']]['all_tasks']
+
+    arc = params['architecture']
+    if_train_default_resnet = 'vanilla' in arc
     model = model_selector_automl.get_model(params)
     # model = model_selector_plainnet.get_model(params)
 
+    if_continue_training = False
     if if_continue_training:
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_10_on_December_06/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3_4_model.pkl'
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_04_on_December_10/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|___5_model.pkl'
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_10_on_December_11/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3_10_model.pkl'
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/06_58_on_February_26/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|chunks=[1|_1|_16]|architecture=resnet18|width_mul=1|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximatio_4_model.pkl'
+        state = torch.load(save_model_path)
         model['rep'].load_state_dict(state['model_rep'])
         for t in tasks:
             key_name = 'model_{}'.format(t)
@@ -138,27 +100,25 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
     model_params = []
     for m in model:
         model_params += model[m].parameters()
+    #todo: remove freezing
+    # for name, param in model['rep'].named_parameters():
+    #     if 'chunk_strength' in name or 'bn_bias' in name:
+    #         param.requires_grad = False
 
+    print(f'Starting training with parameters \n \t{str(params)} \n')
 
-    print('Starting training with parameters \n \t{} \n'.format(str(params)))
-
-    n_iter = 0
-
-    filter_nums = [
-        # 64, #ignore 64: we want at least 1 layer to be shared
-        128, 256, 512]
-
-    NUM_EPOCHS = 30
-    print(NUM_EPOCHS)
     lr = params['lr']
     if overwrite_lr is not None:
         lr = overwrite_lr
-    weight_decay = 0.2
+    weight_decay = 0.0
     if overwrite_weight_decay is not None:
         weight_decay = overwrite_weight_decay
+    lambda_reg = params['lambda_reg']
+    if overwrite_lambda_reg is not None:
+        lambda_reg = overwrite_lambda_reg
+
     if 'Adam' in params['optimizer']:
         # optimizer = torch.optim.Adam(model_params, lr=params['lr'])
-        # optimizer = torch.optim.Adadelta(model_params)
         optimizer = torch.optim.AdamW(model_params, weight_decay=weight_decay, lr=lr)
         # # right now, optimize all, may just as well pass "model['rep'].lin_coeffs_id_zero":
         # lst = [model['rep'].lin_coeffs_id_zero[-1], model['rep'].lin_coeffs_id_zero[-2],
@@ -169,40 +129,31 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
     if if_continue_training:
         optimizer.load_state_dict(state['optimizer_state'])
 
-    # # right now, optimize all, may just as well pass "model['rep'].lin_coeffs_id_zero":
-    # lst = [model['rep'].lin_coeffs_id_zero[-1]
-    #     # , model['rep'].lin_coeffs_id_zero[-2],
-    #     #    model['rep'].lin_coeffs_id_zero[-3]
-    #        ]
-    # optimizer_val = torch.optim.SGD(lst, lr=0.1, momentum=0.9)
-
-    lambda_reg = params['lambda_reg']
-    if overwrite_lambda_reg is not None:
-        lambda_reg = overwrite_lambda_reg
-
-    error_sum_min = 1.0#highest possible error on the scale from 0 to 1 is 1
+    error_sum_min = 1.0  # highest possible error on the scale from 0 to 1 is 1
 
     # train2_loader_iter = iter(train2_loader)
+    NUM_EPOCHS = 50
+    print(f'NUM_EPOCHS={NUM_EPOCHS}')
+    n_iter = 0
 
     for epoch in range(NUM_EPOCHS):
         start = timer()
         print('Epoch {} Started'.format(epoch))
-        if (epoch + 1) % 30 == 0:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] *= 0.5
-            print('Halve the learning rate{}'.format(n_iter))
-            # for param_group in optimizer_val.param_groups:
-            #     param_group['lr'] *= 0.5
+        # if (epoch + 1) % 30 == 0:
+        #     for param_group in optimizer.param_groups:
+        #         param_group['lr'] *= 0.5
+        #     print('Halve the learning rate{}'.format(n_iter))
+        #     # for param_group in optimizer_val.param_groups:
+        #     #     param_group['lr'] *= 0.5
 
         for m in model:
             model[m].train()
 
         for batch_idx, batch in enumerate(train_loader):
-
             print(n_iter)
             n_iter += 1
 
-            def get_desired_labels_from_batch(batch):
+            def get_relevant_labels_from_batch(batch):
                 labels = {}
                 # Read all targets of all tasks
                 for i, t in enumerate(all_tasks):
@@ -252,7 +203,7 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
             # First member is always images
             images = batch[0]
             images = Variable(images.cuda())
-            labels = get_desired_labels_from_batch(batch)
+            labels = get_relevant_labels_from_batch(batch)
 
             loss_data = {}
             scale = {}
@@ -260,39 +211,43 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
                 scale[t] = float(params['scales'][t])
 
             optimizer.zero_grad()
-            loss_reg = lambda_reg * torch.norm(torch.cat([model['rep'].lin_coeffs_id_zero[i].view(-1) for i in range(3)]),1)
-            loss = loss_reg
-            loss_reg_value = (lambda_reg * torch.norm(torch.cat([model['rep'].lin_coeffs_id_zero[i].view(-1) for i in range(3)]),1)).item()
+            if if_train_default_resnet:
+                loss = 0
+            else:
+                loss_reg = lambda_reg * torch.norm(
+                    torch.cat([model['rep'].lin_coeffs_id_zero[i].view(-1) for i in range(3)]), 1)
+                loss = loss_reg
+                # TODO: I may've screwed up by just calling .item(), investigate this further if something goes wrong
+                # loss_reg_value = (lambda_reg * torch.norm(torch.cat([model['rep'].lin_coeffs_id_zero[i].view(-1) for i in range(3)]),1)).item()
+                loss_reg_value = loss_reg.item()
             reps, _ = model['rep'](images, None)
             for i, t in enumerate(tasks):
-                rep = reps[i]
+                if if_train_default_resnet:
+                    rep = reps
+                else:
+                    rep = reps[i]
                 out_t, _ = model[t](rep, None)
                 loss_t = loss_fn[t](out_t, labels[t])
                 loss_data[t] = loss_t.item()
                 loss = loss + scale[t] * loss_t
-                # if i > 0:
-                #     loss = loss + scale[t] * loss_t
-                # else:
-                #     loss = scale[t] * loss_t
             loss.backward()
             optimizer.step()
+
             writer.add_scalar('training_loss', loss.item(), n_iter)
-            writer.add_scalar('l1_reg_loss', loss_reg_value, n_iter)
-            writer.add_scalar('training_minus_l1_reg_loss', loss.item() - loss_reg_value, n_iter)
+            if not if_train_default_resnet:
+                writer.add_scalar('l1_reg_loss', loss_reg_value, n_iter)
+                writer.add_scalar('training_minus_l1_reg_loss', loss.item() - loss_reg_value, n_iter)
             for t in tasks:
                 writer.add_scalar('training_loss_{}'.format(t), loss_data[t], n_iter)
 
-        # print('got to evaluating models')
         for m in model:
             model[m].eval()
 
         tot_loss = {}
         # tot_loss['l1_reg'] = lambda_reg * torch.norm(torch.cat([model['rep'].lin_coeffs_id_zero[i].view(-1) for i in range(3)]), 1)
-        tot_loss['all'] = 0.0#tot_loss['l1_reg']#0.0
-        met = {}
+        tot_loss['all'] = 0.0  # tot_loss['l1_reg']#0.0
         for t in tasks:
             tot_loss[t] = 0.0
-            met[t] = 0.0
 
         num_val_batches = 0
         with torch.no_grad():
@@ -308,15 +263,15 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
 
                 val_reps, _ = model['rep'](val_images, None)
                 for i, t in enumerate(tasks):
-                    val_rep = val_reps[i]
+                    if if_train_default_resnet:
+                        val_rep = val_reps
+                    else:
+                        val_rep = val_reps[i]
                     out_t_val, _ = model[t](val_rep, None)
                     loss_t = loss_fn[t](out_t_val, labels_val[t])
                     tot_loss['all'] += loss_t.item()
                     tot_loss[t] += loss_t.item()
                     metric[t].update(out_t_val, labels_val[t])
-                    # print(out_t_val)
-                    # print(labels_val[t])
-                    # print(metric[t].get_result())
                 num_val_batches += 1
 
         error_sum = 0
@@ -324,10 +279,8 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
             writer.add_scalar('validation_loss_{}'.format(t), tot_loss[t] / num_val_batches, n_iter)
             metric_results = metric[t].get_result()
             for metric_key in metric_results:
-                # pass
                 writer.add_scalar('metric_{}_{}'.format(metric_key, t), metric_results[metric_key], n_iter)
                 error_sum += 1 - metric_results[metric_key]
-
             metric[t].reset()
 
         error_sum /= float(len(tasks))
@@ -338,56 +291,50 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
         # writer.add_scalar('l1_reg_loss', tot_loss['l1_reg'] / num_val_batches, n_iter)
 
         # write scales to log
+        if not if_train_default_resnet:
+            sigmoid_normalization = 1.  # 250.
+            sigmoid_internal_multiple = 1.
+            for i in range(40):
+                # coeffs = list(
+                #     torch.sigmoid(sigmoid_internal_multiple * model['rep'].lin_coeffs_id_zero[-1][:, i]).cpu().detach() / sigmoid_normalization)
+                coeffs = list(model['rep'].lin_coeffs_id_zero[-1][:, i].cpu().detach())
+                coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
+                # writer.add_scalars(f'learning_scales_3_{i}_sigmoid', coeffs, n_iter)
+                writer.add_scalars(f'learning_scales_3_{i}', coeffs, n_iter)
 
-        sigmoid_normalization = 1.  # 250.
-        sigmoid_internal_multiple = 1.
-        for i in range(40):
-            # coeffs = list(
-            #     torch.sigmoid(sigmoid_internal_multiple * model['rep'].lin_coeffs_id_zero[-1][:, i]).cpu().detach() / sigmoid_normalization)
-            coeffs = list(model['rep'].lin_coeffs_id_zero[-1][:, i].cpu().detach())
-            coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
-            # writer.add_scalars(f'learning_scales_3_{i}_sigmoid', coeffs, n_iter)
-            writer.add_scalars(f'learning_scales_3_{i}', coeffs, n_iter)
+                coeffs = list(model['rep'].bn_biases[-1][:, i].cpu().detach())
+                coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
+                writer.add_scalars(f'bn_bias_3_{i}', coeffs, n_iter)
 
-            coeffs = list(model['rep'].bn_biases[-1][:, i].cpu().detach())
-            coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
-            writer.add_scalars(f'bn_bias_3_{i}', coeffs, n_iter)
+            for i in range(model['rep'].num_automl_blocks4):
+                # coeffs = list(
+                #     torch.sigmoid(sigmoid_internal_multiple * model['rep'].lin_coeffs_id_zero[-2][:, i]).cpu().detach() / sigmoid_normalization)
+                coeffs = list(model['rep'].lin_coeffs_id_zero[-2][:, i].cpu().detach())
+                coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
+                # writer.add_scalars(f'learning_scales_2_{i}_sigmoid', coeffs, n_iter)
+                writer.add_scalars(f'learning_scales_2_{i}', coeffs, n_iter)
 
-        for i in range(model['rep'].num_automl_blocks4):
-            # coeffs = list(
-            #     torch.sigmoid(sigmoid_internal_multiple * model['rep'].lin_coeffs_id_zero[-2][:, i]).cpu().detach() / sigmoid_normalization)
-            coeffs = list(model['rep'].lin_coeffs_id_zero[-2][:, i].cpu().detach())
-            coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
-            # writer.add_scalars(f'learning_scales_2_{i}_sigmoid', coeffs, n_iter)
-            writer.add_scalars(f'learning_scales_2_{i}', coeffs, n_iter)
+                coeffs = list(model['rep'].bn_biases[-2][:, i].cpu().detach())
+                coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
+                writer.add_scalars(f'bn_bias_2_{i}', coeffs, n_iter)
 
-            coeffs = list(model['rep'].bn_biases[-2][:, i].cpu().detach())
-            coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
-            writer.add_scalars(f'bn_bias_2_{i}', coeffs, n_iter)
+            for i in range(model['rep'].num_automl_blocks3):
+                # coeffs = list(
+                #     torch.sigmoid(sigmoid_internal_multiple * model['rep'].lin_coeffs_id_zero[-3][:, i]).cpu().detach() / sigmoid_normalization)
+                coeffs = list(model['rep'].lin_coeffs_id_zero[-3][:, i].cpu().detach())
+                coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
+                # writer.add_scalars(f'learning_scales_1_{i}_sigmoid', coeffs, n_iter)
+                writer.add_scalars(f'learning_scales_1_{i}', coeffs, n_iter)
 
-        for i in range(model['rep'].num_automl_blocks3):
-            # coeffs = list(
-            #     torch.sigmoid(sigmoid_internal_multiple * model['rep'].lin_coeffs_id_zero[-3][:, i]).cpu().detach() / sigmoid_normalization)
-            coeffs = list(model['rep'].lin_coeffs_id_zero[-3][:, i].cpu().detach())
-            coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
-            # writer.add_scalars(f'learning_scales_1_{i}_sigmoid', coeffs, n_iter)
-            writer.add_scalars(f'learning_scales_1_{i}', coeffs, n_iter)
-
-            coeffs = list(model['rep'].bn_biases[-3][:, i].cpu().detach())
-            coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
-            writer.add_scalars(f'bn_bias_1_{i}', coeffs, n_iter)
+                coeffs = list(model['rep'].bn_biases[-3][:, i].cpu().detach())
+                coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
+                writer.add_scalars(f'bn_bias_1_{i}', coeffs, n_iter)
 
         if epoch % 3 == 0 or (error_sum < error_sum_min and epoch >= 3):
             # Save after every 3 epoch
             state = {'epoch': epoch + 1,
                      'model_rep': model['rep'].state_dict(),
-                     'optimizer_state': optimizer.state_dict(),
-                     'learning_scales0': model['rep'].lin_coeffs_id_zero[0].data,
-                     'learning_scales1': model['rep'].lin_coeffs_id_zero[1].data,
-                     'learning_scales2': model['rep'].lin_coeffs_id_zero[2].data,
-                     'bn_bias0': model['rep'].bn_biases[0].data,
-                     'bn_bias1': model['rep'].bn_biases[1].data,
-                     'bn_bias2': model['rep'].bn_biases[2].data
+                     'optimizer_state': optimizer.state_dict()
                      }
             for t in tasks:
                 key_name = 'model_{}'.format(t)
@@ -405,7 +352,7 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
             save_model_path = re.sub(r',', '|', save_model_path)
             if len(save_model_path) > 255:
                 save_model_path = saved_models_prefix + "/{}".format(params['exp_id'])[
-                                                                            :200] + "_{}_model.pkl".format(epoch + 1)
+                                                        :200] + "_{}_model.pkl".format(epoch + 1)
                 save_model_path = re.sub(r'\s+', '_', save_model_path)
                 save_model_path = re.sub(r"'", '_', save_model_path)
                 save_model_path = re.sub(r'"', '_', save_model_path)
@@ -414,8 +361,9 @@ def train_multi_task(param_file, overwrite_lr = None, overwrite_lambda_reg = Non
             torch.save(state, save_model_path)
 
             if epoch == 0:
-                #to properly restore model, we need source code for it
-                copy('multi_task/models/my_multi_faces_resnet.py', saved_models_prefix)
+                # to properly restore model, we need source code for it
+                copy('multi_task/models/my_multi_faces_resnet.py' if not if_train_default_resnet
+                     else 'multi_task/models/multi_faces_resnet.py', saved_models_prefix)
 
         error_sum_min = min(error_sum, error_sum_min)
         writer.flush()
@@ -438,7 +386,7 @@ if __name__ == '__main__':
     #             except BaseException as error:
     #                 print('An exception occurred: {}'.format(error))
 
-    #AND then, some time later, this was run:
+    # AND then, some time later, this was run:
     # for lr in [0.0005]:
     #     for lambda_reg in [0.0001]:
     #         for weight_decay in [0.5]:
