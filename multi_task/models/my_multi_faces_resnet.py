@@ -50,7 +50,8 @@ class ResNetSeparated(nn.Module):
         # try to learn learning scales atop batchnorms everywhere.
         # Can work: batch norms are per filter, learning scales are per block.
         # May have not worked previously because there was no regularization
-        self.affine_everywhere = True
+        #TODO: set False below for feature visualization, go back ASAP
+        self.affine_everywhere = False#True
         self.width_mul = width_mul
         #similar to wideresnets, don't change 'conv1'
         self.in_planes = 64

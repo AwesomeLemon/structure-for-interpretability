@@ -5,8 +5,12 @@ import models.my_multi_faces_resnet as my_resnet
 import models.multi_faces_resnet as default_resnet
 import models.groupconv2_multi_faces_resnet as groupconv_resnet
 import models.learnablegroups_multi_faces_resnet as learnablegroups_resnet
+import models.maskcon_multi_faces_resnet as maskcon_multi_faces_resnet
+import models.maskcon2_multi_faces_resnet as maskcon2_multi_faces_resnet
 
 # from multi_task.models.my_multi_faces_resnet import ResNetSeparated, BasicBlock, FaceAttributeDecoder
+import torch
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def get_model(params):
     data = params['dataset']
@@ -28,7 +32,11 @@ def get_model(params):
             model['rep'] = groupconv_resnet.G_ResNet(groupconv_resnet.BasicBlockG, [2, 2, 2, 2], **kwargs)
         if arc == 'learnablegroups_resnet18':
             model['rep'] = learnablegroups_resnet.LearnableGroupsResNet(learnablegroups_resnet.BasicBlock, [2, 2, 2, 2])
-        model['rep'].cuda()
+        if arc == 'maskcon_resnet29':
+            model['rep'] = maskcon_multi_faces_resnet.MaskConResNet(maskcon_multi_faces_resnet.Bottleneck, [3, 3, 3, -1], params['chunks'], width_mul)
+        if arc == 'maskcon2_resnet29':
+            model['rep'] = maskcon2_multi_faces_resnet.MaskConResNet(maskcon2_multi_faces_resnet.Bottleneck, [2, 2, 2, -1], params['chunks'], width_mul)
+        model['rep'].to(device)
         for t in params['tasks']:
             if 'vanilla' in arc:
                 model[t] = default_resnet.FaceAttributeDecoder()
@@ -37,8 +45,12 @@ def get_model(params):
                     model[t] = groupconv_resnet.FaceAttributeDecoder()
                 elif arc == 'learnablegroups_resnet18':
                     model[t] = learnablegroups_resnet.FaceAttributeDecoder()
+                elif arc == 'maskcon_resnet29':
+                    model[t] = maskcon_multi_faces_resnet.FaceAttributeDecoder()
+                elif arc == 'maskcon2_resnet29':
+                    model[t] = maskcon2_multi_faces_resnet.FaceAttributeDecoder()
                 else:
                     model[t] = my_resnet.FaceAttributeDecoder()
 
-            model[t].cuda()
+            model[t].to(device)
         return model

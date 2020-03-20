@@ -25,6 +25,7 @@ attr_num = 40
 attr_names_dict = dict(zip(range(attr_num), df.columns.values))
 
 g = Digraph('G', filename='cluster.gv')
+# g.graph_attr['rankdir'] = 'TB'
 
 with g.subgraph(name='cluster_0') as c:
     c.attr(style='filled', color='lightgrey')
@@ -45,11 +46,58 @@ with g.subgraph(name='cluster_2') as c:
     for i in range(num_blocks[2]):
         c.node(f'2_{i}')
 
-with g.subgraph(name='cluster_3') as c:
+task_clusters_indices = [[8, 9, 11, 17], [16, 15, 3, 22, 38, 0, 12, 35, 24, 30, 7], [39, 28, 26, 23, 14, 13, 5, 4]]
+assigned_to_cluster_indices = []
+
+for j in range(len(task_clusters_indices)):
+    with g.subgraph(name=f'cluster_{j + 3}') as c:
+        c.attr(style='filled', color='lightgrey')
+        c.node_attr.update(style='filled', color='white')
+        cur_cluster_attr_indices = []
+        for i in range(attr_num):
+            if i in task_clusters_indices[j]:
+                c.node(f'fc_{i}', label=f'{attr_names_dict[i].replace("_", "")}')
+                assigned_to_cluster_indices.append(i)
+                cur_cluster_attr_indices.append(i)
+
+        num_chains = 1
+        l = len(cur_cluster_attr_indices)
+        for cur_chain in range(num_chains):
+            for x, y in zip(
+                    cur_cluster_attr_indices[cur_chain * (l // num_chains) + 1:(cur_chain + 1) * (l // num_chains):2],
+                    cur_cluster_attr_indices[
+                    cur_chain * (l // num_chains) + 2:(cur_chain + 1) * (l // num_chains) + 1:2]):
+                g.edge(f'fc_{x}', f'fc_{y}', style='invis')
+
+        # mid = len(cur_cluster_attr_indices) // 2
+        # for x, y in zip(cur_cluster_attr_indices[:mid], cur_cluster_attr_indices[1:mid+1]):
+        #     g.edge(f'fc_{x}', f'fc_{y}', style='invis')
+        #
+        # for x, y in zip(cur_cluster_attr_indices[mid+1:-1], cur_cluster_attr_indices[mid+2:]):
+        #     g.edge(f'fc_{x}', f'fc_{y}', style='invis')
+
+with g.subgraph(name='cluster_whatever') as c:
     c.attr(style='filled', color='lightgrey')
     c.node_attr.update(style='filled', color='white')
+    cur_cluster_attr_indices = []
     for i in range(attr_num):
-        c.node(f'fc_{i}', label=f'{attr_names_dict[i].replace("_", "")}_{i}')
+        if i not in assigned_to_cluster_indices:
+            c.node(f'fc_{i}', label=f'{attr_names_dict[i].replace("_", "")}')
+            cur_cluster_attr_indices.append(i)
+
+    num_chains = 2
+    l = len(cur_cluster_attr_indices)
+    for cur_chain in range(num_chains):
+        for x, y in zip(cur_cluster_attr_indices[cur_chain * (l // num_chains) + 1:(cur_chain + 1) * (l // num_chains)],
+                        cur_cluster_attr_indices[cur_chain * (l // num_chains) + 2:(cur_chain + 1) * (l // num_chains) + 1]):
+            g.edge(f'fc_{x}', f'fc_{y}', style='invis')
+
+if False:
+    with g.subgraph(name='cluster_3') as c:
+        c.attr(style='filled', color='lightgrey')
+        c.node_attr.update(style='filled', color='white')
+        for i in range(attr_num):
+            c.node(f'fc_{i}', label=f'{attr_names_dict[i].replace("_", "")}_{i}')
 
 for i in range(num_blocks[1]):
     cur_scales = learning_scales0_nonzero[:, i]
@@ -69,7 +117,11 @@ for i in range(attr_num):
         if scale_bool:
             g.edge(f'2_{j}', f'fc_{i}')
 
+# g.edge('fc_17', 'fc_11', style='invis')
+# g.edge('fc_11', 'fc_9')
+# g.edge('fc_9', 'fc_8')
+
 g.save('graph_cluster.dot')
-# graphviz.render('dot', 'png', 'graph_cluster')
+# graphviz.render('dot', 'png', 'graph_cluster.dot')
 
 # g.view()
