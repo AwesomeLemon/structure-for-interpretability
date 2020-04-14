@@ -2,6 +2,9 @@ import click
 import json
 import datetime
 from timeit import default_timer as timer
+import matplotlib
+from matplotlib import pyplot as plt
+from matplotlib.lines import Line2D
 
 import numpy as np
 
@@ -31,7 +34,8 @@ cudnn.benchmark = True
 cudnn.enabled = True
 
 @click.command()
-@click.option('--param_file', default='params/maskcon2_8_8_8_batch256_layers29.json', help='JSON parameters file')
+# @click.option('--param_file', default='old_params/sample_all.json', help='JSON parameters file')
+@click.option('--param_file', default='params/binmatr_8_8_8.json', help='JSON parameters file')
 def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, overwrite_weight_decay=None):
     # with open('configs_mid_img.json') as config_params:
     with open('configs.json') as config_params:
@@ -90,31 +94,13 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
     # model = model_selector_plainnet.get_model(params)
 
     if_continue_training = False
-    if_freeze_connectivities = False
     if if_continue_training:
         save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_10_on_December_06/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3_4_model.pkl'
         save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_04_on_December_10/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|___5_model.pkl'
         save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_10_on_December_11/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3_10_model.pkl'
         save_model_path = r'/mnt/raid/data/chebykin/saved_models/06_58_on_February_26/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|chunks=[1|_1|_16]|architecture=resnet18|width_mul=1|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximatio_4_model.pkl'
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_39_on_April_09/optimizer=Adam|batch_size=256|lr=0.0005|chunks=[8|_8|_8]|architecture=maskcon2_resnet29_actual|width_mul=1|weight_decay=0.0005|dataset=celeba_33_model.pkl'
         state = torch.load(save_model_path)
         model['rep'].load_state_dict(state['model_rep'])
-
-        #TODO: I haven't tested this (or thought too much about it)
-        if if_freeze_connectivities:
-            '''
-            TODO: this is a hack! thing is, I don't wanna binarize the variables anymore, and already have the functionality
-            for not doing so when I train the fully connected version
-            '''
-            model['rep'].if_fully_connected = True
-            K = model['rep'].K
-            for j, connectivity in enumerate(model['rep'].connectivities):
-                conn = connectivity.cpu().detach().numpy()
-                for i in range(conn.shape[0]):
-                    ind = np.argpartition(conn[i], -K)[-K:]
-                    conn[i] = np.zeros(conn.shape[1])
-                    conn[i][ind] = 1
-                model['rep'].connectivities[j] = torch.Tensor(conn).to(device)
 
         for t in tasks:
             key_name = 'model_{}'.format(t)
@@ -138,28 +124,22 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
     if overwrite_weight_decay is not None:
         weight_decay = overwrite_weight_decay
 
-    if_learn_task_specific_connections = False
-    print(f'if_learn_task_specific_connections = {if_learn_task_specific_connections}')
+    if_learn_task_specific_connections = True
+
+    lambda_reg = params['connectivities_l1']
 
     if 'Adam' in params['optimizer']:
-        # optimizer = torch.optim.Adam(model_params, lr=params['lr'])
-        if False:
-            tmp = model_params + model['rep'].connectivities
-            optimizer = torch.optim.AdamW(tmp, weight_decay=weight_decay, lr=lr)
-        else:
-            connectivities_lr = 0.001
-            if if_continue_training and if_freeze_connectivities:
-                connectivities_lr = 0.0
-            print(f'separate connectivities_lr = {connectivities_lr}')
-            optimizer = torch.optim.AdamW([{'params': model_params}, {'params': model['rep'].connectivities, 'lr': connectivities_lr}],
-                                          lr=lr, weight_decay=weight_decay)
+        connectivities_lr = params['connectivities_lr']
+        optimizer = torch.optim.AdamW([
+            {'params': model_params},
+            {'params': model['rep'].connectivities, 'lr': connectivities_lr}],
+            lr=lr, weight_decay=weight_decay)
 
+        #TODO: only for computational graph visulaization!
+        # optimizer = torch.optim.AdamW([
+        #     {'params': model_params}],
+        #     lr=lr, weight_decay=weight_decay)
 
-
-        # # right now, optimize all, may just as well pass "model['rep'].lin_coeffs_id_zero":
-        # lst = [model['rep'].lin_coeffs_id_zero[-1], model['rep'].lin_coeffs_id_zero[-2],
-        #        model['rep'].lin_coeffs_id_zero[-3]]
-        # optimizer_val = torch.optim.Adam(lst, lr=params['lr'])
     elif 'SGD' in params['optimizer']:
         optimizer = torch.optim.SGD([{'params' : model_params}, {'params':model['rep'].connectivities, 'lr' : 0.2}], lr=lr, momentum=0.9)
     if if_continue_training:
@@ -183,7 +163,7 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
             for j in range(cur_con.size(0)):
                 coeffs = list(cur_con[j].cpu().detach())
                 coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
-                writer.add_scalars(f'learning_scales_{i}_{j}', coeffs, n_iter)
+                writer.add_scalars(f'learning_scales_{i + 1}_{j}', coeffs, n_iter)
 
     for epoch in range(NUM_EPOCHS):
         start = timer()
@@ -220,8 +200,10 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
             loss_data = {}
 
             optimizer.zero_grad()
-            loss = 0
-            reps, _ = model['rep'](images, None)
+            loss_reg = lambda_reg * torch.norm(torch.cat([con.view(-1) for con in model['rep'].connectivities]), 1)
+            loss = loss_reg
+            loss_reg_value = loss_reg.item()
+            reps = model['rep'](images)
             # del images
             for i, t in enumerate(tasks):
                 if not if_learn_task_specific_connections:
@@ -233,22 +215,29 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
                 loss_data[t] = loss_t.item()
                 loss = loss + scale[t] * loss_t
             loss.backward()
+            # plot_grad_flow(model['rep'].named_parameters())
             optimizer.step()
 
             writer.add_scalar('training_loss', loss.item(), n_iter)
+            writer.add_scalar('l1_reg_loss', loss_reg_value, n_iter)
+            writer.add_scalar('training_minus_l1_reg_loss', loss.item() - loss_reg_value, n_iter)
             for t in tasks:
                 writer.add_scalar('training_loss_{}'.format(t), loss_data[t], n_iter)
 
             if n_iter == 1:
                 #need to do it after the first forward pass because that normalizes them to the [0, 1] range
                 write_connectivities(1)
+                # for visualizing computation graph:
+                # model['rep'].eval()
+                # writer.add_graph(model['rep'], images[0][None, :, :, :])
+                # model['rep'].train()
 
         for m in model:
             model[m].eval()
 
         tot_loss = {}
-        # tot_loss['l1_reg'] = lambda_reg * torch.norm(torch.cat([model['rep'].lin_coeffs_id_zero[i].view(-1) for i in range(3)]), 1)
-        tot_loss['all'] = 0.0  # tot_loss['l1_reg']#0.0
+        tot_loss['l1_reg'] = lambda_reg * torch.norm(torch.cat([con.view(-1) for con in model['rep'].connectivities]), 1)
+        tot_loss['all'] = tot_loss['l1_reg']#0.0
         for t in tasks:
             tot_loss[t] = 0.0
         num_val_batches = 0
@@ -263,7 +252,7 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
                     labels_val[t] = batch_val[i + 1]
                     labels_val[t] = labels_val[t].to(device)
 
-                val_reps, _ = model['rep'](val_images, None)
+                val_reps = model['rep'](val_images)
                 for i, t in enumerate(tasks):
                     if not if_learn_task_specific_connections:
                         val_rep = val_reps
@@ -328,7 +317,7 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
 
             if epoch == 0:
                 # to properly restore model, we need source code for it
-                copy('multi_task/models/maskcon2_multi_faces_resnet.py', saved_models_prefix)
+                copy('multi_task/models/binmatr_multi_faces_resnet.py', saved_models_prefix)
 
         error_sum_min = min(error_sum, error_sum_min)
         writer.flush()
@@ -338,6 +327,35 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
 
     writer.close()
 
+
+def plot_grad_flow(named_parameters):
+    '''Plots the gradients flowing through different layers in the net during training.
+    Can be used for checking for possible gradient vanishing / exploding problems.
+
+    Usage: Plug this function in Trainer class after loss.backwards() as
+    "plot_grad_flow(self.model.named_parameters())" to visualize the gradient flow'''
+    ave_grads = []
+    max_grads = []
+    layers = []
+    for n, p in named_parameters:
+        if (p.requires_grad) and ("bias" not in n):
+            layers.append(n)
+            ave_grads.append(p.grad.abs().mean())
+            max_grads.append(p.grad.abs().max())
+    plt.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
+    plt.bar(np.arange(len(max_grads)), ave_grads, alpha=0.1, lw=1, color="b")
+    plt.hlines(0, 0, len(ave_grads) + 1, lw=2, color="k")
+    plt.xticks(range(0, len(ave_grads), 1), layers, rotation="vertical")
+    plt.xlim(left=0, right=len(ave_grads))
+    plt.ylim(bottom=-0.001, top=0.02)  # zoom in on the lower gradient regions
+    plt.xlabel("Layers")
+    plt.ylabel("average gradient")
+    plt.title("Gradient flow")
+    plt.grid(True)
+    plt.legend([Line2D([0], [0], color="c", lw=4),
+                Line2D([0], [0], color="b", lw=4),
+                Line2D([0], [0], color="k", lw=4)], ['max-gradient', 'mean-gradient', 'zero-gradient'])
+    plt.show()
 
 if __name__ == '__main__':
     train_multi_task()
@@ -361,3 +379,4 @@ if __name__ == '__main__':
     #                              overwrite_lambda_reg=lambda_reg, overwrite_weight_decay=weight_decay)
     #             except BaseException as error:
     #                 print('An exception occurred: {}'.format(error))
+

@@ -40,7 +40,7 @@ def get_dataset(params, configs):
 
         train_loader = torch.utils.data.DataLoader(train_dst, batch_size=params['batch_size'], shuffle=True, num_workers=8)
         # train2_loader = torch.utils.data.DataLoader(train2_dst, batch_size=params['batch_size'], shuffle=True,num_workers=4)
-        val_loader = torch.utils.data.DataLoader(val1_dst, batch_size=params['batch_size'], num_workers=10, shuffle=False)
+        val_loader = torch.utils.data.DataLoader(val1_dst, batch_size=params['batch_size'] * 4, num_workers=8, shuffle=False)
         # val2_loader = torch.utils.data.DataLoader(val2_dst, batch_size=params['batch_size'], num_workers=4,
         #                                           shuffle=True)
         return train_loader, val_loader, None#train2_loader
