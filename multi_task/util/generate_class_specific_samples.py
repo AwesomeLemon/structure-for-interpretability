@@ -4,24 +4,19 @@ Created on Thu Oct 26 14:19:44 2017
 @author: Utku Ozbulak - github.com/utkuozbulak
 https://github.com/utkuozbulak/pytorch-cnn-visualizations/
 """
-import json
 import os
 import random
 
 import numpy as np
 
-from torch.optim import SGD, Adam
+from torch.optim import Adam
 from torchvision import models
 from torch.nn.functional import softmax
 import torch
 import skimage
 
-from multi_task import datasets
-from multi_task.load_model import load_trained_model
-import matplotlib.pyplot as plt
+from multi_task.util.load_model import load_trained_model
 from PIL import Image
-from multi_task.loaders.celeba_loader import CELEBA
-from PIL import ImageFilter
 from skimage.filters import gaussian
 from scipy.ndimage.interpolation import shift
 import shutil

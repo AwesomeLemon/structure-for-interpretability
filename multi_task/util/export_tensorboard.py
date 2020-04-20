@@ -91,7 +91,7 @@ for epoch in range(0, 21, 5):
     f = plt.figure(figsize=(19, 15))
     # plt.matshow(corr_matrix, fignum=f.number, vmin=-1, vmax=1, cmap='viridis')
     plt.matshow(corr_matrix, fignum=f.number, vmin=-1, cmap='viridis')
-    df2 = pandas.read_csv('list_attr_celeba.txt', sep='\s+', skiprows=1)
+    df2 = pandas.read_csv('../../list_attr_celeba.txt', sep='\s+', skiprows=1)
     plt.xticks(range(40), df2.columns, fontsize=14, rotation=90)
     plt.yticks(range(40), df2.columns, fontsize=14)
     cb = plt.colorbar()

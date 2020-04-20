@@ -20,7 +20,7 @@ learning_scales0_nonzero = np.abs(learning_scales0) > 1e-3#learning_scales0.mean
 learning_scales1_nonzero = np.abs(learning_scales1) > 1e-3#learning_scales1.mean(axis=0)
 learning_scales2_nonzero = np.abs(learning_scales2) > 1e-3#learning_scales2.mean(axis=0)
 
-df = pd.read_csv('list_attr_celeba.txt', sep='\s+', skiprows=1)
+df = pd.read_csv('../../list_attr_celeba.txt', sep='\s+', skiprows=1)
 attr_num = 40
 attr_names_dict = dict(zip(range(attr_num), df.columns.values))
 

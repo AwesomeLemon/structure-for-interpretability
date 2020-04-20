@@ -8,8 +8,6 @@ import multi_task.metrics as metrics
 
 import multi_task.model_selector_automl as model_selector_automl
 
-if_train_default_resnet = not True
-
 def load_trained_model(param_file, save_model_path):
     with open(param_file) as json_params:
         params = json.load(json_params)
@@ -23,7 +21,17 @@ def load_trained_model(param_file, save_model_path):
 
     state = torch.load(save_model_path)
 
-    model['rep'].load_state_dict(state['model_rep'])
+    model_rep_state = state['model_rep']
+    # print('ACHTUNG! messing with model["rep"] state (because I"m fixing the shortcut connection not being a MaskConv2d')
+    # model_rep_state['layer3.0.shortcut.0.ordinary_conv.weight'] = model_rep_state['layer3.0.shortcut.0.weight']
+    # del model_rep_state['layer3.0.shortcut.0.weight']
+    # model_rep_state['layer4.0.shortcut.0.ordinary_conv.weight'] = model_rep_state['layer4.0.shortcut.0.weight']
+    # del model_rep_state['layer4.0.shortcut.0.weight']
+    if hasattr(model['rep'], 'connectivities'):
+        print('ACHTUNG! Trying out restoring connectivities')
+        for i, conn in enumerate(state['connectivities']):
+            model['rep'].connectivities[i].data = state['connectivities'][i].data
+    model['rep'].load_state_dict(model_rep_state)
     for i in range(3):
         #apparently learnings scales & biases are saved automatically as part of the model state
         pass
@@ -52,7 +60,12 @@ def eval_trained_model(param_file, model):
     for m in model:
         model[m].eval()
 
+    if_train_default_resnet = 'vanilla' in params['architecture']
+
     with torch.no_grad():
+        # print('ACHTUNG! Setting first connectivities to 0 (because they weren't saved)')
+        # model['rep'].connectivities[0] *= 0
+        # model['rep'].connectivities[1] *= 0
         for batch_val in tst_loader:
             val_images = Variable(batch_val[0].cuda())
             labels_val = {}
@@ -64,6 +77,7 @@ def eval_trained_model(param_file, model):
                 labels_val[t] = Variable(labels_val[t].cuda())
 
             val_reps, _ = model['rep'](val_images, None)
+            # val_reps = model['rep'](val_images)
             for i, t in enumerate(tasks):
                 if if_train_default_resnet:
                     val_rep = val_reps
@@ -101,7 +115,15 @@ if __name__ == '__main__':
     # param_file = 'params/bigger_reg_4_4_4.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_37_on_February_19/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True_6_model.pkl'
     # param_file = 'old_params/sample_all.json'
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/06_58_on_February_26/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|chunks=[1|_1|_16]|architecture=resnet18|width_mul=1|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximatio_5_model.pkl'
-    param_file = 'params/small_reg_1_1_16.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/06_58_on_February_26/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|chunks=[1|_1|_16]|architecture=resnet18|width_mul=1|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximatio_5_model.pkl'
+    # param_file = 'params/small_reg_1_1_16.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_20_on_April_15/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0015|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=2e-06|if_fully_connected=False|dataset=_58_model.pkl'
+    # param_file = 'params/binmatr2_8_8_8_condecay2e6_conlr0015.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_36_on_April_15/optimizer=SGD_Adam|batch_size=64|lr=0.1|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=False|dataset=ce_70_model.pkl'
+    # param_file = 'params/binmatr2_8_8_8_sgdadam01.json'
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/02_09_on_April_17/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=False|use_pret_26_model.pkl'
+    param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain.json' # THIS gave 8.98
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_33_on_February_25/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0|architecture=resnet18_vanilla|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True_5_model.pkl'
+    # param_file = 'params/vanilla.json'
     model = load_trained_model(param_file, save_model_path)
     eval_trained_model(param_file, model)

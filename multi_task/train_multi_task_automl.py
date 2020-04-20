@@ -28,7 +28,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 @click.command()
 # @click.option('--param_file', default='old_params/sample_all.json', help='JSON parameters file')
-@click.option('--param_file', default='params/very_big_reg_8_8_8.json', help='JSON parameters file')
+# @click.option('--param_file', default='params/very_big_reg_8_8_8.json', help='JSON parameters file')
+@click.option('--param_file', default='params/vanilla.json', help='JSON parameters file')
 def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, overwrite_weight_decay=None):
     # with open('configs_smaller_img.json') as config_params:
     with open('configs.json') as config_params:

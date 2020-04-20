@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
-df = pd.read_csv('list_attr_celeba.txt', sep='\s+', skiprows=1)
+df = pd.read_csv('../../list_attr_celeba.txt', sep='\s+', skiprows=1)
 print(dict(zip(range(40), df.columns.values)))
 # corr_matrix = df.corr()
 #

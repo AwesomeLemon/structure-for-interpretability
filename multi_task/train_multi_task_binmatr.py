@@ -5,6 +5,8 @@ from timeit import default_timer as timer
 import matplotlib
 from matplotlib import pyplot as plt
 from matplotlib.lines import Line2D
+from util.sgd_adam import SGD_Adam
+import re
 
 import numpy as np
 
@@ -27,6 +29,7 @@ from shutil import copy
 import os
 import torch
 from torchsummary import summary
+import torchvision.models
 
 device = torch.device("cuda" if torch.cuda.is_available() and True else "cpu")
 import torch.backends.cudnn as cudnn
@@ -35,7 +38,7 @@ cudnn.enabled = True
 
 @click.command()
 # @click.option('--param_file', default='old_params/sample_all.json', help='JSON parameters file')
-@click.option('--param_file', default='params/binmatr_8_8_8.json', help='JSON parameters file')
+@click.option('--param_file', default='params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4.json', help='JSON parameters file')
 def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, overwrite_weight_decay=None):
     # with open('configs_mid_img.json') as config_params:
     with open('configs.json') as config_params:
@@ -55,7 +58,7 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
         params['exp_id'] = exp_identifier
 
         if_debug = True
-        run_dir_name = 'runs_debug' if if_debug else 'runsA'
+        run_dir_name = 'runs_debug' if if_debug else 'runsB'
         time_str = datetime.datetime.now().strftime("%H_%M_on_%B_%d")
         log_dir_name = '/mnt/antares_raid/home/awesomelemon/{}/{}'.format(run_dir_name, time_str)
         def print_proper_log_dir_name():
@@ -93,6 +96,19 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
     # summary(model['rep'], input_size=[(3, 64, 64), (1,)])
     # model = model_selector_plainnet.get_model(params)
 
+    if_use_pretrained_resnet = params['use_pretrained_resnet']
+    if if_use_pretrained_resnet:
+        model_rep_dict = model['rep'].state_dict()
+        pretrained_dict = torchvision.models.resnet18(pretrained=True).state_dict()
+        def rename_key(key):
+            old_key = key
+            key = re.sub('downsample', 'shortcut', key)
+            key = re.sub('(layer[34].0.conv1.)', '\g<0>ordinary_conv.', key)
+            return key
+        pretrained_dict = {rename_key(k): v for k, v in pretrained_dict.items() if rename_key(k) in model_rep_dict and k != 'conv1.weight'}
+        model_rep_dict.update(pretrained_dict)
+        model['rep'].load_state_dict(model_rep_dict)
+
     if_continue_training = False
     if if_continue_training:
         save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_10_on_December_06/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3_4_model.pkl'
@@ -127,8 +143,19 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
     if_learn_task_specific_connections = True
 
     lambda_reg = params['connectivities_l1']
+    if_apply_l1_to_all_conn = params['connectivities_l1_all']
 
-    if 'Adam' in params['optimizer']:
+    if 'SGD_Adam' in params['optimizer']:
+        sgd_optimizer = torch.optim.SGD([
+            {'params': model_params}],
+            lr=lr, momentum=0.9)
+
+        connectivities_lr = params['connectivities_lr']
+        adam_optimizer = torch.optim.AdamW([{'params': model['rep'].connectivities}],
+            lr=connectivities_lr, weight_decay=weight_decay)
+
+        optimizer = SGD_Adam(sgd_optimizer, adam_optimizer)
+    elif 'Adam' in params['optimizer']:
         connectivities_lr = params['connectivities_lr']
         optimizer = torch.optim.AdamW([
             {'params': model_params},
@@ -141,7 +168,8 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
         #     lr=lr, weight_decay=weight_decay)
 
     elif 'SGD' in params['optimizer']:
-        optimizer = torch.optim.SGD([{'params' : model_params}, {'params':model['rep'].connectivities, 'lr' : 0.2}], lr=lr, momentum=0.9)
+        # optimizer = torch.optim.SGD([{'params' : model_params}, {'params':model['rep'].connectivities, 'lr' : 0.2}], lr=lr, momentum=0.9)
+        optimizer = torch.optim.SGD([{'params' : model_params}, {'params':model['rep'].connectivities}], lr=lr, momentum=0.9)
     if if_continue_training:
         optimizer.load_state_dict(state['optimizer_state'])
 
@@ -150,7 +178,7 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
     error_sum_min = 1.0  # highest possible error on the scale from 0 to 1 is 1
 
     # train2_loader_iter = iter(train2_loader)
-    NUM_EPOCHS = 70
+    NUM_EPOCHS = 50
     print(f'NUM_EPOCHS={NUM_EPOCHS}')
     n_iter = 0
 
@@ -165,15 +193,17 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
                 coeffs = {str(i): coeff for i, coeff in enumerate(coeffs)}
                 writer.add_scalars(f'learning_scales_{i + 1}_{j}', coeffs, n_iter)
 
+    #torch.autograd.set_detect_anomaly(True)
     for epoch in range(NUM_EPOCHS):
         start = timer()
         print('Epoch {} Started'.format(epoch))
-        # if (epoch + 1) % 30 == 0:
-        #     for param_group in optimizer.param_groups:
-        #         param_group['lr'] *= 0.5
-        #     print('Halve the learning rate{}'.format(n_iter))
-        #     # for param_group in optimizer_val.param_groups:
-        #     #     param_group['lr'] *= 0.5
+        if (epoch + 1) % 20 == 0:
+            lr_multiplier = 0.5
+            for param_group in optimizer.sgd.param_groups:
+                param_group['lr'] *= lr_multiplier
+            print(f'Multiply sgd-only learning rate by {lr_multiplier} at step {n_iter}')
+            # for param_group in optimizer_val.param_groups:
+            #     param_group['lr'] *= 0.5
 
         for m in model:
             model[m].train()
@@ -200,7 +230,17 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
             loss_data = {}
 
             optimizer.zero_grad()
-            loss_reg = lambda_reg * torch.norm(torch.cat([con.view(-1) for con in model['rep'].connectivities]), 1)
+            if False:
+                loss_reg = lambda_reg * torch.norm(torch.cat([con.view(-1) for con in model['rep'].connectivities]), 1)
+            else:
+                # print('Apply l1 only to task connectivities')
+                # loss_reg = lambda_reg * torch.norm(model['rep'].connectivities[-1].clone().view(-1), 1)
+                if if_apply_l1_to_all_conn:
+                    loss_reg = lambda_reg * torch.norm(torch.cat([con.view(-1) for con in model['rep'].connectivities]), 1)
+                else:
+                    loss_reg = lambda_reg * torch.norm(torch.cat([model['rep'].connectivities[-1].view(-1)]), 1)
+                if epoch < 5:
+                    loss_reg *= 0
             loss = loss_reg
             loss_reg_value = loss_reg.item()
             reps = model['rep'](images)
@@ -260,7 +300,9 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
                         val_rep = val_reps[i]
                     out_t_val, _ = model[t](val_rep, None)
                     loss_t = loss_fn[t](out_t_val, labels_val[t])
-                    tot_loss['all'] += loss_t.item()
+                    # tot_loss['all'] += loss_t.item()
+                    #todo: I think old way of calculating validation loss was wrong, because we also divided l1 loss by the number of tasks
+                    tot_loss['all'] += scale[t] * loss_t.item()
                     tot_loss[t] += loss_t.item()
                     metric[t].update(out_t_val, labels_val[t])
                 num_val_batches += 1
@@ -278,7 +320,9 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
         writer.add_scalar('average_error', error_sum * 100, n_iter)
         print(f'average_error = {error_sum * 100}')
 
-        writer.add_scalar('validation_loss', tot_loss['all'] / num_val_batches / len(tasks), n_iter)
+        # writer.add_scalar('validation_loss', tot_loss['all'] / num_val_batches / len(tasks), n_iter)
+        # todo: I think old way of calculating validation loss was wrong, because we also divided l1 loss by the number of tasks
+        writer.add_scalar('validation_loss', tot_loss['all'] / num_val_batches, n_iter)
         # writer.add_scalar('l1_reg_loss', tot_loss['l1_reg'] / num_val_batches, n_iter)
 
         # write scales to log
@@ -289,6 +333,7 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
             # Save after every 3 epoch
             state = {'epoch': epoch + 1,
                      'model_rep': model['rep'].state_dict(),
+                     'connectivities': model['rep'].connectivities,
                      'optimizer_state': optimizer.state_dict()
                      }
             for t in tasks:
@@ -317,7 +362,8 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
 
             if epoch == 0:
                 # to properly restore model, we need source code for it
-                copy('multi_task/models/binmatr_multi_faces_resnet.py', saved_models_prefix)
+                # Note: for quite some time I've been saving ordinary binmatr instead of binmatr2. Yikes!
+                copy('multi_task/models/binmatr2_multi_faces_resnet.py', saved_models_prefix)
 
         error_sum_min = min(error_sum, error_sum_min)
         writer.flush()
