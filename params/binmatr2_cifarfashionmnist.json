@@ -1,0 +1,18 @@
+{
+    "optimizer": "SGD_Adam",
+    "batch_size": 256,
+    "lr": 0.005,
+    "connectivities_lr" : 0.001,
+    "chunks" : [8, 8, 4],
+    "architecture" : "binmatr2_resnet18",
+    "width_mul" : 1,
+    "weight_decay" : 0.0,
+    "connectivities_l1" : 3e-4,
+    "connectivities_l1_all" : false,
+    "if_fully_connected" : false,
+    "use_pretrained_resnet" : false,
+    "dataset": "cifarfashionmnist",
+    "tasks": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19"],
+    "scales": {"0":0.05, "1":0.05, "2":0.05, "3":0.05, "4":0.05, "5":0.05, "6":0.05, "7":0.05, "8":0.05, "9":0.05, "10":0.05,
+               "11":0.05, "12":0.05, "13":0.05, "14":0.05, "15":0.05, "16":0.05, "17":0.05, "18":0.05, "19":0.05}
+}

@@ -118,11 +118,12 @@ class BasicBlock(nn.Module):
 
 
 class BinMatrResNet(nn.Module):
-    def __init__(self, block, num_blocks, num_chunks, width_mul, if_fully_connected):
+    def __init__(self, block, num_blocks, num_chunks, width_mul, if_fully_connected, if_cifar=False):
         super(BinMatrResNet, self).__init__()
         self.if_fully_connected = if_fully_connected
         self.in_planes = 64
         self._create_connectivity_parameters(num_chunks)
+        self.if_cifar = if_cifar
 
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
@@ -196,7 +197,6 @@ class BinMatrResNet(nn.Module):
                     connectivity = self.connectivities[2]
                     connectivity[connectivity <= 0.5] = 0.5
                     connectivity[connectivity > 1.0] = 1.0
-
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.layer1(out)
 
@@ -205,8 +205,7 @@ class BinMatrResNet(nn.Module):
         out = self.layer3(out)
 
         out = self.layer4(out)
-
-        out = F.avg_pool2d(out, 8)
+        out = F.avg_pool2d(out, (24, 21) if not self.if_cifar else 4) # 16 for 128x128 images, 8 for 64x64
         out = out.view(out.size(0), -1)[:, :, None]
 
         outs = []
@@ -226,6 +225,16 @@ class BinMatrResNet(nn.Module):
 class FaceAttributeDecoder(nn.Module):
     def __init__(self):
         super(FaceAttributeDecoder, self).__init__()
+        self.linear = nn.Linear(512, 2)
+
+    def forward(self, x, mask):
+        x = self.linear(x)
+        out = F.log_softmax(x, dim=1)
+        return out, mask
+
+class FaceAttributeDecoderCifar10(nn.Module):
+    def __init__(self):
+        super(FaceAttributeDecoderCifar10, self).__init__()
         self.linear = nn.Linear(512, 2)
 
     def forward(self, x, mask):

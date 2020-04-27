@@ -38,10 +38,13 @@ cudnn.enabled = True
 
 @click.command()
 # @click.option('--param_file', default='old_params/sample_all.json', help='JSON parameters file')
-@click.option('--param_file', default='params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4.json', help='JSON parameters file')
-def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, overwrite_weight_decay=None):
+# @click.option('--param_file', default='params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4_bigimg.json', help='JSON parameters file')
+@click.option('--param_file', default='params/binmatr2_16_16_4_sgdadam0002_pretrain_condecaytask1e-4_biggerimg.json', help='JSON parameters file')
+# @click.option('--param_file', default='params/binmatr2_cifarfashionmnist.json', help='JSON parameters file')
+@click.option('--if_debug/--not_debug', default=True, help='Whether to store results in runs_debug')
+def train_multi_task(param_file, if_debug, overwrite_lr=None, overwrite_lambda_reg=None, overwrite_weight_decay=None):
     # with open('configs_mid_img.json') as config_params:
-    with open('configs.json') as config_params:
+    with open('configs_bigger_img.json') as config_params:
         configs = json.load(config_params)
 
     with open(param_file) as json_params:
@@ -57,7 +60,6 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
         exp_identifier = '|'.join(exp_identifier)
         params['exp_id'] = exp_identifier
 
-        if_debug = True
         run_dir_name = 'runs_debug' if if_debug else 'runsB'
         time_str = datetime.datetime.now().strftime("%H_%M_on_%B_%d")
         log_dir_name = '/mnt/antares_raid/home/awesomelemon/{}/{}'.format(run_dir_name, time_str)
@@ -178,7 +180,7 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
     error_sum_min = 1.0  # highest possible error on the scale from 0 to 1 is 1
 
     # train2_loader_iter = iter(train2_loader)
-    NUM_EPOCHS = 50
+    NUM_EPOCHS = 30
     print(f'NUM_EPOCHS={NUM_EPOCHS}')
     n_iter = 0
 
@@ -197,11 +199,11 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
     for epoch in range(NUM_EPOCHS):
         start = timer()
         print('Epoch {} Started'.format(epoch))
-        if (epoch + 1) % 20 == 0:
-            lr_multiplier = 0.5
-            for param_group in optimizer.sgd.param_groups:
-                param_group['lr'] *= lr_multiplier
-            print(f'Multiply sgd-only learning rate by {lr_multiplier} at step {n_iter}')
+        # if (epoch + 1) % 20 == 0:
+        #     lr_multiplier = 0.5
+        #     for param_group in optimizer.sgd.param_groups:
+        #         param_group['lr'] *= lr_multiplier
+        #     print(f'Multiply sgd-only learning rate by {lr_multiplier} at step {n_iter}')
             # for param_group in optimizer_val.param_groups:
             #     param_group['lr'] *= 0.5
 
@@ -218,7 +220,12 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
                 for i, t in enumerate(all_tasks):
                     if t not in tasks:
                         continue
-                    labels[t] = batch[i + 1]
+                    if params['dataset'] == 'cifar10':
+                        labels[t] = (batch[1] == int(t)).type(torch.LongTensor)
+                    elif params['dataset'] == 'cifarfashionmnist':
+                        labels[t] = (batch[1] == int(t)).type(torch.LongTensor)
+                    else:
+                        labels[t] = batch[i + 1]
                     labels[t] = labels[t].to(device)
                 return labels
 
@@ -284,13 +291,14 @@ def train_multi_task(param_file, overwrite_lr=None, overwrite_lambda_reg=None, o
         with torch.no_grad():
             for batch_val in val_loader:
                 val_images = batch_val[0].to(device)
-                labels_val = {}
-
-                for i, t in enumerate(all_tasks):
-                    if t not in tasks:
-                        continue
-                    labels_val[t] = batch_val[i + 1]
-                    labels_val[t] = labels_val[t].to(device)
+                labels_val = get_relevant_labels_from_batch(batch_val)
+                # labels_val = {}
+                #
+                # for i, t in enumerate(all_tasks):
+                #     if t not in tasks:
+                #         continue
+                #     labels_val[t] = batch_val[i + 1]
+                #     labels_val[t] = labels_val[t].to(device)
 
                 val_reps = model['rep'](val_images)
                 for i, t in enumerate(tasks):

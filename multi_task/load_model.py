@@ -44,8 +44,8 @@ def load_trained_model(param_file, save_model_path):
 
     return model
 
-def eval_trained_model(param_file, model):
-    with open('configs.json') as config_params:
+def eval_trained_model(param_file, model, config_name):
+    with open(config_name) as config_params:
         configs = json.load(config_params)
 
     with open(param_file) as json_params:
@@ -67,17 +67,26 @@ def eval_trained_model(param_file, model):
         # model['rep'].connectivities[0] *= 0
         # model['rep'].connectivities[1] *= 0
         for batch_val in tst_loader:
+            def get_relevant_labels_from_batch(batch):
+                labels = {}
+                # Read all targets of all tasks
+                for i, t in enumerate(all_tasks):
+                    if t not in tasks:
+                        continue
+                    if params['dataset'] == 'cifar10':
+                        labels[t] = (batch[1] == int(t)).type(torch.LongTensor)
+                    elif params['dataset'] == 'cifarfashionmnist':
+                        labels[t] = (batch[1] == int(t)).type(torch.LongTensor)
+                    else:
+                        labels[t] = batch[i + 1]
+                    labels[t] = labels[t].cuda()
+                return labels
+
             val_images = Variable(batch_val[0].cuda())
-            labels_val = {}
+            labels_val = get_relevant_labels_from_batch(batch_val)
 
-            for i, t in enumerate(all_tasks):
-                if t not in tasks:
-                    continue
-                labels_val[t] = batch_val[i + 1]
-                labels_val[t] = Variable(labels_val[t].cuda())
-
-            val_reps, _ = model['rep'](val_images, None)
-            # val_reps = model['rep'](val_images)
+            # val_reps, _ = model['rep'](val_images, None)
+            val_reps = model['rep'](val_images)
             for i, t in enumerate(tasks):
                 if if_train_default_resnet:
                     val_rep = val_reps
@@ -121,9 +130,16 @@ if __name__ == '__main__':
     # param_file = 'params/binmatr2_8_8_8_condecay2e6_conlr0015.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_36_on_April_15/optimizer=SGD_Adam|batch_size=64|lr=0.1|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=False|dataset=ce_70_model.pkl'
     # param_file = 'params/binmatr2_8_8_8_sgdadam01.json'
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/02_09_on_April_17/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=False|use_pret_26_model.pkl'
-    param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain.json' # THIS gave 8.98
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/02_09_on_April_17/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=False|use_pret_26_model.pkl'
+    # param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain.json' # THIS gave 8.98
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_33_on_February_25/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0|architecture=resnet18_vanilla|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True_5_model.pkl'
     # param_file = 'params/vanilla.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_37_on_April_25/optimizer=SGD_Adam|batch_size=256|lr=0.005|connectivities_lr=0.001|chunks=[8|_8|_32]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=3e-05|connectivities_l1_all=False|if_14_model.pkl'
+    # param_file = 'params/binmatr2_cifar.json'
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_05_on_April_25/optimizer=SGD_Adam|batch_size=96|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|if__16_model.pkl'
+    param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4_bigimg.json'
+
+    config_name = 'configs.json'
+    config_name = 'configs_big_img.json'
     model = load_trained_model(param_file, save_model_path)
-    eval_trained_model(param_file, model)
+    eval_trained_model(param_file, model, config_name)

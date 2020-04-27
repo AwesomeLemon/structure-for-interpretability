@@ -43,7 +43,8 @@ def get_model(params):
         if arc == 'binmatr_resnet18':
             model['rep'] = binmatr_multi_faces_resnet.BinMatrResNet(binmatr_multi_faces_resnet.BasicBlock, [2, 2, 2, 2], params['chunks'], width_mul, params['if_fully_connected'])
         if arc == 'binmatr2_resnet18':
-            model['rep'] = binmatr2_multi_faces_resnet.BinMatrResNet(binmatr2_multi_faces_resnet.BasicBlock, [2, 2, 2, 2], params['chunks'], width_mul, params['if_fully_connected'])
+            model['rep'] = binmatr2_multi_faces_resnet.BinMatrResNet(binmatr2_multi_faces_resnet.BasicBlock, [2, 2, 2, 2], params['chunks'],
+                                                                     width_mul, params['if_fully_connected'], False)
         model['rep'].to(device)
         for t in params['tasks']:
             if 'vanilla' in arc:
@@ -65,4 +66,17 @@ def get_model(params):
                     model[t] = my_resnet.FaceAttributeDecoder()
 
             model[t].to(device)
+        return model
+
+    if 'cifar10' or 'cifarfashionmnist' in data:
+        model = {}
+        if arc == 'binmatr2_resnet18':
+            model['rep'] = binmatr2_multi_faces_resnet.BinMatrResNet(binmatr2_multi_faces_resnet.BasicBlock, [2, 2, 2, 2],
+                                                                     params['chunks'], width_mul, params['if_fully_connected'], True)
+        model['rep'].to(device)
+        for t in params['tasks']:
+            if arc == 'binmatr2_resnet18':
+                model[t] = binmatr2_multi_faces_resnet.FaceAttributeDecoderCifar10()
+            model[t].to(device)
+
         return model

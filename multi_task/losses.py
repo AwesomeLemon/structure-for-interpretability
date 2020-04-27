@@ -62,13 +62,13 @@ def l1_loss_instance(input, target, val=False):
     return lss 
 
 def get_loss(params):
-    if 'mnist' in params['dataset']:
+    if 'mnist' == params['dataset']:
         loss_fn = {}
         for t in params['tasks']:
             loss_fn[t] = nll 
         return loss_fn
 
-    if 'cityscapes' in params['dataset']:
+    if 'cityscapes' == params['dataset']:
         loss_fn = {}
         if 'D' in params['tasks']:
             loss_fn['D'] = rmse
@@ -80,7 +80,19 @@ def get_loss(params):
             loss_fn['D'] = l1_loss_depth
         return loss_fn
 
-    if 'celeba' in params['dataset']:
+    if 'celeba' == params['dataset']:
+        loss_fn = {}
+        for t in params['tasks']:
+            loss_fn[t] = nll
+        return loss_fn
+
+    if 'cifar10' == params['dataset']:
+        loss_fn = {}
+        for t in params['tasks']:
+            loss_fn[t] = nll
+        return loss_fn
+
+    if 'cifarfashionmnist' == params['dataset']:
         loss_fn = {}
         for t in params['tasks']:
             loss_fn[t] = nll

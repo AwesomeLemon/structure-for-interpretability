@@ -76,17 +76,23 @@ class RunningMetric(object):
 
 def get_metrics(params):
     met = {}
-    if 'mnist' in params['dataset']:
+    if 'mnist' == params['dataset']:
         for t in params['tasks']:
             met[t] = RunningMetric(metric_type = 'ACC')
-    if 'cityscapes' in params['dataset']:
+    if 'cityscapes' == params['dataset']:
         if 'S' in params['tasks']:
             met['S'] = RunningMetric(metric_type = 'IOU', n_classes=19)
         if 'I' in params['tasks']:
             met['I'] = RunningMetric(metric_type = 'L1')
         if 'D' in params['tasks']:
             met['D'] = RunningMetric(metric_type = 'L1')
-    if 'celeba' in params['dataset']:
+    if 'celeba' == params['dataset']:
+        for t in params['tasks']:
+            met[t] = RunningMetric(metric_type = 'ACC')
+    if 'cifar10' == params['dataset']:
+        for t in params['tasks']:
+            met[t] = RunningMetric(metric_type = 'ACC')
+    if 'cifarfashionmnist' == params['dataset']:
         for t in params['tasks']:
             met[t] = RunningMetric(metric_type = 'ACC')
     return met
