@@ -66,7 +66,9 @@ def eval_trained_model(param_file, model, config_name):
         # print('ACHTUNG! Setting first connectivities to 0 (because they weren't saved)')
         # model['rep'].connectivities[0] *= 0
         # model['rep'].connectivities[1] *= 0
-        for batch_val in tst_loader:
+        for i, batch_val in enumerate(tst_loader):
+            if i % 10 == 0:
+                print(i)
             def get_relevant_labels_from_batch(batch):
                 labels = {}
                 # Read all targets of all tasks
@@ -136,10 +138,13 @@ if __name__ == '__main__':
     # param_file = 'params/vanilla.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_37_on_April_25/optimizer=SGD_Adam|batch_size=256|lr=0.005|connectivities_lr=0.001|chunks=[8|_8|_32]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=3e-05|connectivities_l1_all=False|if_14_model.pkl'
     # param_file = 'params/binmatr2_cifar.json'
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_05_on_April_25/optimizer=SGD_Adam|batch_size=96|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|if__16_model.pkl'
-    param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4_bigimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_05_on_April_25/optimizer=SGD_Adam|batch_size=96|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|if__16_model.pkl'
+    # param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4_bigimg.json'
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_06_on_April_26/optimizer=SGD_Adam|batch_size=52|lr=0.002|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|_27_model.pkl'
+    param_file = 'params/binmatr2_16_16_4_sgdadam0002_pretrain_condecaytask1e-4_biggerimg.json'
 
     config_name = 'configs.json'
     config_name = 'configs_big_img.json'
+    config_name = 'configs_bigger_img.json'
     model = load_trained_model(param_file, save_model_path)
     eval_trained_model(param_file, model, config_name)
