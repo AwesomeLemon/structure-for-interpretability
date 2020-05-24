@@ -2,23 +2,54 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
-df = pd.read_csv('../../list_attr_celeba.txt', sep='\s+', skiprows=1)
+df = pd.read_csv('list_attr_celeba.txt', sep='\s+', skiprows=1)
 print(dict(zip(range(40), df.columns.values)))
-# corr_matrix = df.corr()
-#
-# mask = np.tri(corr_matrix.shape[0], k=-1)
-# mask[(corr_matrix < 0.2) & (corr_matrix > -0.2)] = 1
-# corr_matrix = np.ma.array(corr_matrix, mask=mask)
-# f = plt.figure(figsize=(19, 15))
-# plt.matshow(corr_matrix, fignum=f.number, vmin=-1, vmax=1, cmap='rainbow')
-# plt.xticks(range(df.shape[1]), df.columns, fontsize=14, rotation=90)
-# plt.yticks(range(df.shape[1]), df.columns, fontsize=14)
-# cb = plt.colorbar()
-# cb.ax.tick_params(labelsize=14)
-# plt.title('Correlation Matrix', fontsize=16)
-# plt.show()
 
-print(df[df == 1].sum() / df[df == -1].abs().sum())
+#conditional probability P(attr2|attr1)
+cond_probs = np.ones((40, 40))
+for i1 in range(len(df.columns.values)):
+    for i2 in range(len(df.columns.values)):
+        attr1 = df.columns.values[i1]
+        attr2 = df.columns.values[i2]
+
+        df_attr1_holds = df[df[attr1] == 1]
+        df_attr1_and_attr2_hold = df_attr1_holds[df_attr1_holds[attr2] == 1]
+        cond_probs[i1, i2] = len(df_attr1_and_attr2_hold) / float(len(df_attr1_holds))
+        print(cond_probs[i1, i2])
+
+f = plt.figure(figsize=(10.80 * 1.5, 10.80 * 1.5))
+plt.tight_layout()
+plt.pcolormesh(cond_probs, figure=f, cmap='coolwarm')
+plt.title('Condtional probabilities P(column|row)')
+ax = plt.gca()
+ax.set_yticks(np.arange(.5, 40, 1))
+ax.set_yticklabels(df.columns.values)
+ax.set_xticks(np.arange(.5, 40, 1))
+ax.set_xticklabels(df.columns.values, rotation=90)
+cb = plt.colorbar(fraction=0.03, pad=0.01)
+cb.ax.tick_params(labelsize=6)
+plt.savefig(f'celeba_cond_prob.svg', format='svg', bbox_inches='tight', pad_inches=0, dpi=200)
+
+plt.show()
+
+
+def plot_corr_matrix(df):
+    corr_matrix = df.corr()
+
+    mask = np.tri(corr_matrix.shape[0], k=-1)
+    mask[(corr_matrix < 0.2) & (corr_matrix > -0.2)] = 1
+    corr_matrix = np.ma.array(corr_matrix, mask=mask)
+    f = plt.figure(figsize=(19, 15))
+    plt.matshow(corr_matrix, fignum=f.number, vmin=-1, vmax=1, cmap='rainbow')
+    plt.xticks(range(df.shape[1]), df.columns, fontsize=14, rotation=90)
+    plt.yticks(range(df.shape[1]), df.columns, fontsize=14)
+    cb = plt.colorbar()
+    cb.ax.tick_params(labelsize=14)
+    plt.title('Correlation Matrix', fontsize=16)
+    plt.savefig('corrs.jpg')
+    # plt.show()
+
+# print(df[df == 1].sum() / df[df == -1].abs().sum())
 # print(df.Smiling.corr(df.Wearing_Lipstick))
 # print(df.corr().Smiling)
 
@@ -67,4 +98,17 @@ Wearing_Lipstick       0.895504
 Wearing_Necklace       0.140208
 Wearing_Necktie        0.078417
 Young                  3.417290
+'''
+
+'''
+for activation-maximization experiments:
+
+lol, High_Cheekbones correlates highly with Smiling, and the network visualizes smiles for it!
+which means that we didn't really learn it! so I'll choose something else
+
+                        (frequency ratio)       (error rate in 23_06_on_April_26/optimizer=SGD_Adam|batch_size=52|lr=0.002|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|_27_model.pkl')
+19:High_Cheekbones        0.834970              12.5
+31:Smiling                0.930801              7.2
+
+
 '''

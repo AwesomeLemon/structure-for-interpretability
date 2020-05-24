@@ -1,0 +1,17 @@
+{
+    "optimizer": "Adam",
+    "batch_size": 8,
+    "lr": 0.0001,
+    "connectivities_lr" : 0.001,
+    "chunks" : [8, 8, 32],
+    "architecture" : "binmatr2_resnet50",
+    "width_mul" : 1,
+    "weight_decay" : 0.0,
+    "connectivities_l1" : 0.0,
+    "connectivities_l1_all" : false,
+    "if_fully_connected" : false,
+    "use_pretrained_resnet" : false,
+    "dataset": "cityscapes",
+    "tasks": ["S", "I", "D"],
+    "scales": {"S":0.695, "I":0.005, "D": 0.3}
+}

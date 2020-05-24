@@ -9,6 +9,8 @@ import models.maskcon_multi_faces_resnet as maskcon_multi_faces_resnet
 import models.maskcon2_multi_faces_resnet as maskcon2_multi_faces_resnet
 import models.binmatr_multi_faces_resnet as binmatr_multi_faces_resnet
 import models.binmatr2_multi_faces_resnet as binmatr2_multi_faces_resnet
+import models.binmatr_fullconv_multi_faces_resnet as binmatr_fullconv_multi_faces_resnet
+import models.pspnet as pspnet
 
 # from multi_task.models.my_multi_faces_resnet import ResNetSeparated, BasicBlock, FaceAttributeDecoder
 import torch
@@ -45,6 +47,10 @@ def get_model(params):
         if arc == 'binmatr2_resnet18':
             model['rep'] = binmatr2_multi_faces_resnet.BinMatrResNet(binmatr2_multi_faces_resnet.BasicBlock, [2, 2, 2, 2], params['chunks'],
                                                                      width_mul, params['if_fully_connected'], False)
+        if arc == 'binmatr_fullconv_resnet18':
+            model['rep'] = binmatr_fullconv_multi_faces_resnet.BinMatrFullConvResNet(
+                binmatr_fullconv_multi_faces_resnet.BasicBlock, [2, 2, 2, 2], params['chunks'],
+                                                                     width_mul, params['if_fully_connected'], False)
         model['rep'].to(device)
         for t in params['tasks']:
             if 'vanilla' in arc:
@@ -62,13 +68,16 @@ def get_model(params):
                     model[t] = binmatr_multi_faces_resnet.FaceAttributeDecoder()
                 elif arc == 'binmatr2_resnet18':
                     model[t] = binmatr2_multi_faces_resnet.FaceAttributeDecoder()
+                elif arc == 'binmatr_fullconv_resnet18':
+                    model[t] = binmatr_fullconv_multi_faces_resnet.FaceAttributeFullConvDecoder(
+                        model['rep'].connectivities[-1][int(t)].unsqueeze(0))
                 else:
                     model[t] = my_resnet.FaceAttributeDecoder()
 
             model[t].to(device)
         return model
 
-    if 'cifar10' or 'cifarfashionmnist' in data:
+    if 'cifar10' in data or 'cifarfashionmnist' in data:
         model = {}
         if arc == 'binmatr2_resnet18':
             model['rep'] = binmatr2_multi_faces_resnet.BinMatrResNet(binmatr2_multi_faces_resnet.BasicBlock, [2, 2, 2, 2],
@@ -79,4 +88,22 @@ def get_model(params):
                 model[t] = binmatr2_multi_faces_resnet.FaceAttributeDecoderCifar10()
             model[t].to(device)
 
+        return model
+
+    if 'cityscapes' in data:
+        model = {}
+        if arc == 'binmatr2_resnet50':
+            base_resnet = binmatr2_multi_faces_resnet.BinMatrResNet(binmatr2_multi_faces_resnet.Bottleneck, [3, 4, 6, 3], params['chunks'],
+                                                                     width_mul, params['if_fully_connected'], False, num_tasks=3)
+        model['rep'] = pspnet.ResNetDilated(base_resnet, 8)
+        model['rep'].cuda()
+        if 'S' in params['tasks']:
+            model['S'] = pspnet.SegmentationDecoder(num_class=19, task_type='C')
+            model['S'].cuda()
+        if 'I' in params['tasks']:
+            model['I'] = pspnet.SegmentationDecoder(num_class=2, task_type='R')
+            model['I'].cuda()
+        if 'D' in params['tasks']:
+            model['D'] = pspnet.SegmentationDecoder(num_class=1, task_type='R')
+            model['D'].cuda()
         return model

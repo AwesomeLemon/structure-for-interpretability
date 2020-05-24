@@ -35,7 +35,7 @@ def l1_loss_depth(input, target, val=False):
         size_average = False
     else:
         size_average = True
-    mask = target > 0
+    mask = target != 0# target > 0
     if mask.data.sum() < 1:
         # no instance pixel
         return None 

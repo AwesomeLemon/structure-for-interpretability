@@ -5,7 +5,7 @@
     },
 
     "cityscapes": {
-        "path": "PATH_FOR_CITYSCAPES_DATASET",
+        "path": "/mnt/raid/data/chebykin/cityscapes/",
         "all_tasks": ["S", "I", "D"],
         "img_rows": 256,
         "img_cols": 512

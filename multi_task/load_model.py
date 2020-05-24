@@ -3,12 +3,14 @@ import torch
 
 from torch.autograd import Variable
 
-import multi_task.datasets as datasets
-import multi_task.metrics as metrics
+# import multi_task.datasets as datasets
+# import multi_task.metrics as metrics
+# import multi_task.model_selector_automl as model_selector_automl
+import datasets as datasets
+import metrics as metrics
+import model_selector_automl as model_selector_automl
 
-import multi_task.model_selector_automl as model_selector_automl
-
-def load_trained_model(param_file, save_model_path):
+def load_trained_model(param_file, save_model_path, if_restore_connectivities=True):
     with open(param_file) as json_params:
         params = json.load(json_params)
 
@@ -27,10 +29,28 @@ def load_trained_model(param_file, save_model_path):
     # del model_rep_state['layer3.0.shortcut.0.weight']
     # model_rep_state['layer4.0.shortcut.0.ordinary_conv.weight'] = model_rep_state['layer4.0.shortcut.0.weight']
     # del model_rep_state['layer4.0.shortcut.0.weight']
-    if hasattr(model['rep'], 'connectivities'):
-        print('ACHTUNG! Trying out restoring connectivities')
+    if hasattr(model['rep'], 'connectivities') and if_restore_connectivities:
+        # print('ACHTUNG! Trying out restoring connectivities')
         for i, conn in enumerate(state['connectivities']):
             model['rep'].connectivities[i].data = state['connectivities'][i].data
+
+    # model['rep'].connectivities[0].data *= 0
+    '''
+    if mutliply val_rep by 0, get 0.32
+    if multiply conn[-1] by 0, get 0.32
+    if multiply conn[-3] by 0, get 0.25
+    if multiply conn[0] by 0, get 0.25
+    
+    I think this is simply explained by batch norm. I've checked with conn[0]*=0: before batchnorm indeed 0, after - non-zero
+    '''
+    # model['rep'].connectivities[-1][3].data *= 0 # Bags under eyes - appears disconnected in my graph vizualization (i.e. all incoming connections
+    #         are useless. Well, let's test this.
+    # model['rep'].connectivities[-1][17].data *= 0 # same with gray hair
+    '''
+    both get worse (while all the others stay the same)
+    Task = 3, acc = 0.8259928524689183   -------> Task = 3, acc = 0.2074294055468868
+    Task = 17, acc = 0.9607892485025419  -------> Task = 17, acc = 0.9513263200281874
+    '''
     model['rep'].load_state_dict(model_rep_state)
     for i in range(3):
         #apparently learnings scales & biases are saved automatically as part of the model state
@@ -140,11 +160,14 @@ if __name__ == '__main__':
     # param_file = 'params/binmatr2_cifar.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_05_on_April_25/optimizer=SGD_Adam|batch_size=96|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|if__16_model.pkl'
     # param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4_bigimg.json'
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_06_on_April_26/optimizer=SGD_Adam|batch_size=52|lr=0.002|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|_27_model.pkl'
-    param_file = 'params/binmatr2_16_16_4_sgdadam0002_pretrain_condecaytask1e-4_biggerimg.json'
-
-    config_name = 'configs.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_06_on_April_26/optimizer=SGD_Adam|batch_size=52|lr=0.002|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|_27_model.pkl'
+    # param_file = 'params/binmatr2_16_16_4_sgdadam0002_pretrain_condecaytask1e-4_biggerimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_42_on_April_17/optimizer=SGD|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=True|use_pretrained_17_model.pkl'
+    # param_file = 'params/binmatr2_8_8_8_sgd001_pretrain_fc.json'
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_37_on_May_15/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_128|_128|_256|_256|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=2e-06|co_100_model.pkl'
+    param_file = 'params/binmatr2_64_64_128_128_256_256_512_512_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
+    # config_name = 'configs.json'
     config_name = 'configs_big_img.json'
-    config_name = 'configs_bigger_img.json'
+    # config_name = 'configs_bigger_img.json'
     model = load_trained_model(param_file, save_model_path)
     eval_trained_model(param_file, model, config_name)
