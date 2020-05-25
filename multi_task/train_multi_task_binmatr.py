@@ -409,7 +409,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         # writer.add_scalar('validation_loss', tot_loss['all'] / num_val_batches / len(tasks), n_iter)
         # todo: I think old way of calculating validation loss was wrong, because we also divided l1 loss by the number of tasks
         writer.add_scalar('validation_loss', tot_loss['all'] / num_val_batches, n_iter)
-        writer.add_scalar('validation_loss_minus_l1_reg_loss', (tot_loss['all'] - tot_loss['l1_reg']) / num_val_batches, n_iter)
+        writer.add_scalar('validation_loss_minus_l1_reg_loss', (tot_loss['all'] ) / num_val_batches - tot_loss['l1_reg'], n_iter)
         # writer.add_scalar('l1_reg_loss', tot_loss['l1_reg'] / num_val_batches, n_iter)
 
         # write scales to log

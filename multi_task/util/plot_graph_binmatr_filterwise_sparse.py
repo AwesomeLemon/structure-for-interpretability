@@ -1,9 +1,7 @@
 from graphviz import Digraph
-import graphviz
 import torch
 import pandas as pd
 import numpy as np
-from matplotlib import pyplot as plt
 from collections import defaultdict
 
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_24_on_April_19/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0003|connectivities_l1_all=False|if_15_model.pkl'
@@ -13,38 +11,38 @@ from collections import defaultdict
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_50_on_April_28/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0002|connectivities_l1_all=False|_24_model.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_37_on_May_15/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_128|_128|_256|_256|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=2e-06|co_100_model.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_49_on_May_20/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_128|_128|_256|_256|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=2e-06|co_28_model.pkl'
-# save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_35_on_May_20/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
-save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_35_on_May_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
+# THE ONE BELOW!
+save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_35_on_May_20/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_35_on_May_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_18_on_May_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_49_on_May_25/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
+
 
 state = torch.load(save_model_path)
 
 connectivities = state['connectivities']
-if True:
-    # learning_scales = [connectivities[-3].detach().cpu().numpy(), connectivities[-2].detach().cpu().numpy(), connectivities[-1].detach().cpu().numpy()]
-    learning_scales = list(map(lambda conn: conn.detach().cpu().numpy(), connectivities))
-    for ls in learning_scales:
-        print(ls.shape)
-    # num_blocks = [256, 512, 512]
-    num_blocks = list(map(lambda ls: ls.shape[1], learning_scales))
-else:
-    learning_scales = [np.array([[1, 1], [1, 1]]), np.array([[1, 1], [1, 1]]), np.array([[1, 1]] * 40)]
-    num_blocks = [2, 2, 2]
+learning_scales = list(map(lambda conn: conn.detach().cpu().numpy(), connectivities))
+for ls in learning_scales:
+    print(ls.shape)
+num_blocks = list(map(lambda ls: ls.shape[1], learning_scales))
 # so learning scales have shapes 4x4, 4x4, 40x4
 print(learning_scales[2].shape)
 print(learning_scales[2])
 
 learning_scales_binary = list(map(lambda x: np.abs(x) > 0.5, learning_scales))
-# plt.imshow(learning_scales_binary[0])
-# plt.show()
-# learning_scales0_nonzero = np.abs(learning_scales0) > 0.5#learning_scales0.mean(axis=0)
-# learning_scales1_nonzero = np.abs(learning_scales1) > 0.5#learning_scales1.mean(axis=0)
-# learning_scales2_nonzero = np.abs(learning_scales2) > 0.5#learning_scales2.mean(axis=0)
 
 df = pd.read_csv('list_attr_celeba.txt', sep='\s+', skiprows=1)
 attr_num = 40
 attr_names_dict = dict(zip(range(attr_num), df.columns.values))
 
-g = Digraph('G', filename='cluster.gv')
+g = Digraph('G', filename='cluster.gv', node_attr={'shape': 'rect', #'fontsize': '20',
+                                                   'width':'.5', 'height':'.2',
+                                                   # 'fixedsize':'true'
+                                                   },
+            edge_attr={'arrowhead' : 'vee', 'penwidth' : '.5'})
+# g.graph_attr['size'] = '5.75,5.25'
+g.attr(None, {'nodesep' : '0.05', 'ranksep' : '1.0'})
+print(g.source)
 # g.graph_attr['rankdir'] = 'TB'
 
 def delete_unused():
@@ -85,43 +83,44 @@ for i in range(10):
 
 print(1111)
 
-assigned_to_cluster_indices = []
-for j in range(num_blocks[-1]):
-    with g.subgraph(name=f'cluster_{j + len(num_blocks)}') as c:
-        c.attr(style='filled', color='lightgrey')
-        c.node_attr.update(style='filled', color='white')
-        cur_cluster_attr_indices = []
-        for i in range(attr_num):
-            if learning_scales_binary[-1][i, j] > 0.5 and i not in assigned_to_cluster_indices:
-                c.node(f'fc_{i}', label=f'{attr_names_dict[i].replace("_", "")}')
-                assigned_to_cluster_indices.append(i)
-                cur_cluster_attr_indices.append(i)
-
-        num_chains = 1
-        l = len(cur_cluster_attr_indices)
-        for cur_chain in range(num_chains):
-            for x, y in zip(
-                    cur_cluster_attr_indices[cur_chain * (l // num_chains) + 1:(cur_chain + 1) * (l // num_chains):2],
-                    cur_cluster_attr_indices[cur_chain * (l // num_chains) + 2:(cur_chain + 1) * (l // num_chains) + 1:2]):
-                c.edge(f'fc_{x}', f'fc_{y}', style='invis')
-
+# Create FC nodes:
 if False:
-    with g.subgraph(name='cluster_3') as c:
+    assigned_to_cluster_indices = []
+    for j in range(num_blocks[-1]):
+        with g.subgraph(name=f'cluster_{j + len(num_blocks)}') as c:
+            c.attr(style='filled', color='lightgrey')
+            c.node_attr.update(style='filled', color='white')
+            cur_cluster_attr_indices = []
+            for i in range(attr_num):
+                if learning_scales_binary[-1][i, j] > 0.5 and i not in assigned_to_cluster_indices:
+                    c.node(f'fc_{i}', label=f'{attr_names_dict[i].replace("_", "")}')
+                    assigned_to_cluster_indices.append(i)
+                    cur_cluster_attr_indices.append(i)
+
+            # num_chains = 1
+            # l = len(cur_cluster_attr_indices)
+            # for cur_chain in range(num_chains):
+            #     for x, y in zip(
+            #             cur_cluster_attr_indices[cur_chain * (l // num_chains) + 1:(cur_chain + 1) * (l // num_chains):2],
+            #             cur_cluster_attr_indices[cur_chain * (l // num_chains) + 2:(cur_chain + 1) * (l // num_chains) + 1:2]):
+            #         c.edge(f'fc_{x}', f'fc_{y}', style='invis')
+else:
+    with g.subgraph(name=f'cluster_{len(num_blocks) + 1}') as c:
         c.attr(style='filled', color='lightgrey')
         c.node_attr.update(style='filled', color='white')
         for i in range(attr_num):
-            c.node(f'fc_{i}', label=f'{attr_names_dict[i].replace("_", "")}_{i}')
+            c.node(f'fc_{i}', label=str(attr_names_dict[i].replace("_", r"\n")))
 
-# for j in range(len(learning_scales_binary) - 1):
-#     for i in range(num_blocks[j + 1]):
-#         cur_scales_in = learning_scales_binary[j][i, :]
-#         at_least_one_incoming = np.any(cur_scales_in)
-#         cur_scales_out = learning_scales_binary[j + 1][:, i]
-#         at_least_one_outgoing = np.any(cur_scales_out)
-#         if at_least_one_incoming and at_least_one_outgoing:
-#             for k, scale_bool in enumerate(cur_scales_in):
-#                 if scale_bool:
-#                     g.edge(f'{j}_{k}', f'{j+1}_{i}')
+        # num_chains = 1
+        # l = 40
+        # cur_cluster_attr_indices = range(attr_num)
+        # for cur_chain in range(num_chains):
+        #     for x, y in zip(
+        #             cur_cluster_attr_indices[cur_chain * (l // num_chains) + 1:(cur_chain + 1) * (l // num_chains):2],
+        #             cur_cluster_attr_indices[cur_chain * (l // num_chains) + 2:(cur_chain + 1) * (l // num_chains) + 1:2]):
+        #         c.edge(f'fc_{x}', f'fc_{y}', style='invis')
+
+# Find & save relevant edges:
 actually_good_nodes = defaultdict(set)
 edges_to_add = set()
 for j in range(1, len(learning_scales_binary)):
@@ -170,10 +169,5 @@ for j in range(len(learning_scales_binary)):
 for (src, dest) in edges_to_add:
     g.edge(src, dest)
 
-
-
-# g.edge('fc_17', 'fc_11', style='invis')
-# g.edge('fc_11', 'fc_9')
-# g.edge('fc_9', 'fc_8')
 
 g.save('graph_cluster_binmatr.dot')
