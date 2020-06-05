@@ -6,9 +6,7 @@ import skimage
 import imageio
 import re
 import glob
-
 from torch.utils import data
-
 
 class CELEBA(data.Dataset):
     def __init__(self, root, split="train", is_transform=False, img_size=(32, 32), augmentations=None):
@@ -51,7 +49,7 @@ class CELEBA(data.Dataset):
                 # selected_files = list(filter(lambda x: x.split(' ')[1] == '0', fl))
                 # selected_files = selected_files[int(len(selected_files) * (0.9)):]
             elif 'val' in self.split:
-                selected_files =  list(filter(lambda x:x.split(' ')[1]=='1', fl))#[:97]
+                selected_files =  list(filter(lambda x:x.split(' ')[1]=='1', fl))#[:77]
             elif 'test' in self.split:
                 selected_files =  list(filter(lambda x:x.split(' ')[1]=='2', fl))
             selected_file_names = list(map(lambda x:re.sub('jpg', 'png', x.split(' ')[0]), selected_files))

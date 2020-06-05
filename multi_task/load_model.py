@@ -9,13 +9,40 @@ from torch.autograd import Variable
 import datasets as datasets
 import metrics as metrics
 import model_selector_automl as model_selector_automl
+from util.util import celeba_dict
 
-def load_trained_model(param_file, save_model_path, if_restore_connectivities=True):
+
+def load_trained_model(param_file, save_model_path, if_restore_connectivities=True,
+                       if_visuzalization_conns=False, if_replace_useless_conns_with_bias=False,
+                       if_enable_bias=False, if_replace_useless_conns_with_additives=False,
+                       if_additives_user=False, replace_constants_last_layer_mode=None):
+    assert not (if_replace_useless_conns_with_additives and if_replace_useless_conns_with_bias) #only 1 of those can be true
+
     with open(param_file) as json_params:
         params = json.load(json_params)
 
-    # train_loader, train_dst, val_loader, val_dst = datasets.get_dataset(params, configs)
-    # loss_fn = losses.get_loss(params)
+    if if_visuzalization_conns:
+        viz_conns_state = torch.load('visualized_connectivities.pkl')
+        auxillary_connectivities_for_id_shortcut = viz_conns_state['auxillary_connectivities_for_id_shortcut']
+
+        params['this_is_graph_visualization_run'] = 'Yep'
+        if True:
+            params['auxillary_connectivities_for_id_shortcut'] = list(
+                map(lambda x: torch.Tensor(x).cuda() if x is not None else None, auxillary_connectivities_for_id_shortcut)) \
+                                                             + [None, None, None]
+        else:
+            params['auxillary_connectivities_for_id_shortcut'] = [None] * 15
+
+    if if_replace_useless_conns_with_bias:
+        params['if_replace_useless_conns_with_bias'] = 'Yep'
+    if if_replace_useless_conns_with_additives:
+        params['if_replace_useless_conns_with_additives'] = 'Yep'
+    if if_additives_user:
+        params['if_additives_user'] = 'Yep'
+
+    if if_enable_bias:
+        params['if_enable_bias'] = 'Yep'
+    params['replace_constants_last_layer_mode'] = replace_constants_last_layer_mode
 
     model = model_selector_automl.get_model(params)
 
@@ -32,7 +59,10 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
     if hasattr(model['rep'], 'connectivities') and if_restore_connectivities:
         # print('ACHTUNG! Trying out restoring connectivities')
         for i, conn in enumerate(state['connectivities']):
-            model['rep'].connectivities[i].data = state['connectivities'][i].data
+            if not if_visuzalization_conns:
+                model['rep'].connectivities[i].data = state['connectivities'][i].data
+            else:
+                model['rep'].connectivities[i].data = torch.Tensor(viz_conns_state['connectivities'][i]).cuda().data
 
     # model['rep'].connectivities[0].data *= 0
     '''
@@ -51,17 +81,44 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
     Task = 3, acc = 0.8259928524689183   -------> Task = 3, acc = 0.2074294055468868
     Task = 17, acc = 0.9607892485025419  -------> Task = 17, acc = 0.9513263200281874
     '''
+
+    # model['rep'].connectivities[-5][389, 126] = False
+    '''
+    are affected (per graph): ['5_o_Clock_Shadow', 'Attractive', 'Bags_Under_Eyes', 'Bald', 'Bangs', 'Big_Lips', 'Big_Nose', 'Blurry', 'Double_Chin', 'Eyeglasses', 'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'Male', 'Mustache', 'Oval_Face', 'Pale_Skin', 'Receding_Hairline', 'Wearing_Hat', 'Wearing_Lipstick', 'Wearing_Necktie']
+    didn't change, although should've: Bags_Under_Eyes, Bald, Blurry, Eyeglasses, Mustache, Receding_Hairline, Wearing_Hat, Wearing_Necktie
+    changed, although shouldn't have:
+    improved (?!): Big_Lips
+    '''
+    # model['rep'].connectivities[-1][:, 173] = False # behaved exactly as expected
+    # model['rep'].connectivities[-5][410, 121] = False # 9 things changed, all 9 should've. But Wearing_Hat also should've, but didn't
+    # => disabling 14_ that leads to Wearing_Hat along the disabled path shouldn't change the hat's performance:
+    # model['rep'].connectivities[-1][:, 138] = False # ... and it doesn't.
+
+    # Next thing: disable everything for Hat, get performance => it turns out to be the same (i.e. connections don't matter)
+    # but connections are far from 0.5:
+    # print(model['rep'].connectivities[-1][35, :])
+
+    # model['rep'].connectivities[-1][:, 435] = 0.
+
     model['rep'].load_state_dict(model_rep_state)
     for i in range(3):
-        #apparently learnings scales & biases are saved automatically as part of the model state
+        # apparently learnings scales & biases are saved automatically as part of the model state
         pass
         # model['rep'].lin_coeffs_id_zero[i] = state[f'learning_scales{i}']
         # model['rep'].bn_biases[i] = state[f'bn_bias{i}']
 
+    if if_replace_useless_conns_with_additives:
+        if 'additives' in state:
+            model['rep'].block[0].additives_dict = state['additives']
+    if replace_constants_last_layer_mode == 'restore':
+        model['rep'].last_layer_additives = state['last_layer_additives']
     for t in tasks:
         key_name = 'model_{}'.format(t)
         model[t].load_state_dict(state[key_name])
 
+    # print(model['35'].linear.weight)
+    # np.where(model['rep'].connectivities[-1][35, :].cpu().detach().numpy() > 0.5)[0]
+    # np.where(np.abs(model['35'].linear.weight.cpu().detach().numpy()[0]) > 0.1)[0]
     return model
 
 def eval_trained_model(param_file, model, config_name):
@@ -89,6 +146,7 @@ def eval_trained_model(param_file, model, config_name):
         for i, batch_val in enumerate(tst_loader):
             if i % 10 == 0:
                 print(i)
+
             def get_relevant_labels_from_batch(batch):
                 labels = {}
                 # Read all targets of all tasks
@@ -127,13 +185,57 @@ def eval_trained_model(param_file, model, config_name):
         metric_results = metric[t].get_result()
 
         for metric_key in metric_results:
-            print(f'Task = {t}, acc = {metric_results[metric_key]}')
+            print(f'({t}) {celeba_dict[int(t)]}\t acc = {metric_results[metric_key]}'.expandtabs(30))
             error_sum += 1 - metric_results[metric_key]
 
         metric[t].reset()
 
     error_sum /= float(len(tasks))
-    print( error_sum * 100)
+    print(error_sum * 100)
+
+
+def convert_useless_connections_to_biases(param_file, save_model_path, config_name):
+    model = load_trained_model(param_file, save_model_path, True, False, True)
+    eval_trained_model(param_file, model, config_name)
+
+    state = {'model_rep': model['rep'].state_dict(),
+             'connectivities': model['rep'].connectivities}
+    with open(param_file) as json_params:
+        params = json.load(json_params)
+    tasks = params['tasks']
+    for t in tasks:
+        key_name = 'model_{}'.format(t)
+        state[key_name] = model[t].state_dict()
+    new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_biased' + '.pkl'
+    torch.save(state, new_save_model_path)
+
+def convert_useless_connections_to_additives(param_file, save_model_path, config_name):
+    model = load_trained_model(param_file, save_model_path, True, False, False, False, True, False, 'store')
+    eval_trained_model(param_file, model, config_name)
+
+    state = {'model_rep': model['rep'].state_dict(),
+             'connectivities': model['rep'].connectivities,
+             'additives':model['rep'].block[0].additives_dict,
+             'last_layer_additives':model['rep'].last_layer_additives}
+    with open(param_file) as json_params:
+        params = json.load(json_params)
+    tasks = params['tasks']
+    for t in tasks:
+        key_name = 'model_{}'.format(t)
+        state[key_name] = model[t].state_dict()
+    new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_additives' + '.pkl'
+    torch.save(state, new_save_model_path)
+
+def test_biased_net(param_file, save_model_path, config_name):
+    new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_biased' + '.pkl'
+    model = load_trained_model(param_file, new_save_model_path, True, True, False, True)
+    eval_trained_model(param_file, model, config_name)
+
+def test_additives_net(param_file, save_model_path, config_name):
+    new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_additives' + '.pkl'
+    model = load_trained_model(param_file, new_save_model_path, True, True, False, False, True, True, 'restore')
+    eval_trained_model(param_file, model, config_name)
+
 
 if __name__ == '__main__':
     # save_model_path = r"/mnt/raid/data/chebykin/saved_models/first_model_epoch_100.pkl"
@@ -164,10 +266,21 @@ if __name__ == '__main__':
     # param_file = 'params/binmatr2_16_16_4_sgdadam0002_pretrain_condecaytask1e-4_biggerimg.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_42_on_April_17/optimizer=SGD|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=True|use_pretrained_17_model.pkl'
     # param_file = 'params/binmatr2_8_8_8_sgd001_pretrain_fc.json'
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_37_on_May_15/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_128|_128|_256|_256|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=2e-06|co_100_model.pkl'
-    param_file = 'params/binmatr2_64_64_128_128_256_256_512_512_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_37_on_May_15/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_128|_128|_256|_256|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=2e-06|co_100_model.pkl'
+    # param_file = 'params/binmatr2_64_64_128_128_256_256_512_512_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_53_on_May_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_40_model.pkl'
+    param_file = 'params/binmatr2_filterwise_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_35_on_May_20/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_condecayall2e-6.json'
+
     # config_name = 'configs.json'
     config_name = 'configs_big_img.json'
     # config_name = 'configs_bigger_img.json'
-    model = load_trained_model(param_file, save_model_path)
-    eval_trained_model(param_file, model, config_name)
+    if True:
+        # convert_useless_connections_to_biases(param_file, save_model_path, config_name)
+        # test_biased_net(param_file, save_model_path, config_name)
+        convert_useless_connections_to_additives(param_file, save_model_path, config_name)
+        # test_additives_net(param_file, save_model_path, config_name)
+    else:
+        model = load_trained_model(param_file, save_model_path, True, False)
+        eval_trained_model(param_file, model, config_name)

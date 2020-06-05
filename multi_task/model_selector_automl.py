@@ -14,7 +14,9 @@ import models.pspnet as pspnet
 
 # from multi_task.models.my_multi_faces_resnet import ResNetSeparated, BasicBlock, FaceAttributeDecoder
 import torch
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def get_model(params):
     data = params['dataset']
@@ -31,26 +33,67 @@ def get_model(params):
             model['rep'] = my_resnet.ResNetSeparated(my_resnet.BasicBlock, [3, 4, 6, 3], params['chunks'], width_mul)
         if arc == 'resnet18_vanilla':
             model['rep'] = default_resnet.ResNet(default_resnet.BasicBlock, [2, 2, 2, 2])
-        if arc =='g_resnext50':#actually resnet18
+        if arc == 'g_resnext50':  # actually resnet18
             kwargs = {'groups': 32, 'width_per_group': 4}
             model['rep'] = groupconv_resnet.G_ResNet(groupconv_resnet.BasicBlockG, [2, 2, 2, 2], **kwargs)
         if arc == 'learnablegroups_resnet18':
             model['rep'] = learnablegroups_resnet.LearnableGroupsResNet(learnablegroups_resnet.BasicBlock, [2, 2, 2, 2])
         if arc == 'maskcon_resnet29':
-            model['rep'] = maskcon_multi_faces_resnet.MaskConResNet(maskcon_multi_faces_resnet.Bottleneck, [3, 3, 3, -1], params['chunks'], width_mul)
+            model['rep'] = maskcon_multi_faces_resnet.MaskConResNet(maskcon_multi_faces_resnet.Bottleneck,
+                                                                    [3, 3, 3, -1], params['chunks'], width_mul)
         if arc == 'maskcon2_resnet29':
-            model['rep'] = maskcon2_multi_faces_resnet.MaskConResNet(maskcon2_multi_faces_resnet.Bottleneck, [2, 2, 2, -1], params['chunks'], width_mul)
+            model['rep'] = maskcon2_multi_faces_resnet.MaskConResNet(maskcon2_multi_faces_resnet.Bottleneck,
+                                                                     [2, 2, 2, -1], params['chunks'], width_mul)
         if arc == 'maskcon2_resnet29_actual':
-            model['rep'] = maskcon2_multi_faces_resnet.MaskConResNet(maskcon2_multi_faces_resnet.Bottleneck, [3, 3, 3, -1], params['chunks'], width_mul)
+            model['rep'] = maskcon2_multi_faces_resnet.MaskConResNet(maskcon2_multi_faces_resnet.Bottleneck,
+                                                                     [3, 3, 3, -1], params['chunks'], width_mul)
         if arc == 'binmatr_resnet18':
-            model['rep'] = binmatr_multi_faces_resnet.BinMatrResNet(binmatr_multi_faces_resnet.BasicBlock, [2, 2, 2, 2], params['chunks'], width_mul, params['if_fully_connected'])
+            model['rep'] = binmatr_multi_faces_resnet.BinMatrResNet(binmatr_multi_faces_resnet.BasicBlock, [2, 2, 2, 2],
+                                                                    params['chunks'], width_mul,
+                                                                    params['if_fully_connected'])
         if arc == 'binmatr2_resnet18':
-            model['rep'] = binmatr2_multi_faces_resnet.BinMatrResNet(binmatr2_multi_faces_resnet.BasicBlock, [2, 2, 2, 2], params['chunks'],
-                                                                     width_mul, params['if_fully_connected'], False)
+            block_to_use = binmatr2_multi_faces_resnet.BasicBlock
+
+            def check_param_contradiction():
+                if not (block_to_use == binmatr2_multi_faces_resnet.BasicBlock): #i.e. already overriden
+                    raise ValueError("Contradicting params: which block to use?")
+
+            if_enable_bias = 'if_enable_bias' in params
+            aux_conns = None
+            replace_constants_last_layer_mode = None
+
+            if 'replace_constants_last_layer_mode' in params:
+                replace_constants_last_layer_mode = params['replace_constants_last_layer_mode']
+
+            if 'if_replace_useless_conns_with_bias' in params:
+                check_param_contradiction()
+                block_to_use = binmatr2_multi_faces_resnet.BasicBlockBiasCreator
+
+            if 'if_replace_useless_conns_with_additives' in params:
+                check_param_contradiction()
+                if 'this_is_graph_visualization_run' in params:
+                    block_to_use = binmatr2_multi_faces_resnet.BasicBlockMockAdditivesUser
+                    aux_conns = params['auxillary_connectivities_for_id_shortcut']
+                else:
+                    if not ('if_additives_user' in params):
+                        block_to_use = binmatr2_multi_faces_resnet.BasicBlockAdditivesCreator
+                    else:
+                        block_to_use = binmatr2_multi_faces_resnet.BasicBlockMockAdditivesUser
+            else:
+                if 'this_is_graph_visualization_run' in params:
+                    check_param_contradiction()
+                    block_to_use = binmatr2_multi_faces_resnet.BasicBlockMock
+                    aux_conns = params['auxillary_connectivities_for_id_shortcut']
+
+            model['rep'] = binmatr2_multi_faces_resnet.BinMatrResNet(block_to_use,
+                                                                     [2, 2, 2, 2], params['chunks'],
+                                                                     width_mul, params['if_fully_connected'], False, 40,
+                                                                     params['input_size'], aux_conns, if_enable_bias,
+                                                                     replace_constants_last_layer_mode)
         if arc == 'binmatr_fullconv_resnet18':
             model['rep'] = binmatr_fullconv_multi_faces_resnet.BinMatrFullConvResNet(
                 binmatr_fullconv_multi_faces_resnet.BasicBlock, [2, 2, 2, 2], params['chunks'],
-                                                                     width_mul, params['if_fully_connected'], False)
+                width_mul, params['if_fully_connected'], False)
         model['rep'].to(device)
         for t in params['tasks']:
             if 'vanilla' in arc:
@@ -80,8 +123,11 @@ def get_model(params):
     if 'cifar10' in data or 'cifarfashionmnist' in data:
         model = {}
         if arc == 'binmatr2_resnet18':
-            model['rep'] = binmatr2_multi_faces_resnet.BinMatrResNet(binmatr2_multi_faces_resnet.BasicBlock, [2, 2, 2, 2],
-                                                                     params['chunks'], width_mul, params['if_fully_connected'], True)
+            model['rep'] = binmatr2_multi_faces_resnet.BinMatrResNet(binmatr2_multi_faces_resnet.BasicBlock,
+                                                                     [2, 2, 2, 2],
+                                                                     params['chunks'], width_mul,
+                                                                     params['if_fully_connected'], True,
+                                                                     10 if 'cifar10' in data else 20)
         model['rep'].to(device)
         for t in params['tasks']:
             if arc == 'binmatr2_resnet18':
@@ -93,8 +139,11 @@ def get_model(params):
     if 'cityscapes' in data:
         model = {}
         if arc == 'binmatr2_resnet50':
-            base_resnet = binmatr2_multi_faces_resnet.BinMatrResNet(binmatr2_multi_faces_resnet.Bottleneck, [3, 4, 6, 3], params['chunks'],
-                                                                     width_mul, params['if_fully_connected'], False, num_tasks=3)
+            raise NotImplementedError('Need to implement setting GAP size for Cityscapes input size')
+            base_resnet = binmatr2_multi_faces_resnet.BinMatrResNet(binmatr2_multi_faces_resnet.Bottleneck,
+                                                                    [3, 4, 6, 3], params['chunks'],
+                                                                    width_mul, params['if_fully_connected'], False,
+                                                                    num_tasks=3)
         model['rep'] = pspnet.ResNetDilated(base_resnet, 8)
         model['rep'].cuda()
         if 'S' in params['tasks']:

@@ -1,3 +1,5 @@
+from multiprocessing import set_start_method
+
 import click
 import json
 import datetime
@@ -24,6 +26,7 @@ device = torch.device("cuda" if torch.cuda.is_available() and True else "cpu")
 import torch.backends.cudnn as cudnn
 cudnn.benchmark = True
 cudnn.enabled = True
+# set_start_method('spawn')
 
 @click.command()
 # @click.option('--param_file', default='old_params/sample_all.json', help='JSON parameters file')
@@ -35,20 +38,26 @@ cudnn.enabled = True
 # @click.option('--param_file', default='params/binmatr2_cityscapes_2tasks.json', help='JSON parameters file')
 # @click.option('--param_file', default='params/binmatr2_64_64_128_128_256_256_512_512_sgdadam0004_pretrain_condecayall2e-6_bigimg.json', help='JSON parameters file')
 # @click.option('--param_file', default='params/binmatr2_4_4_4_4_4_4_4_4_sgdadam0004_pretrain_fc_bigimg.json', help='JSON parameters file')
-@click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001_pretrain_condecaytask1e-7.json', help='JSON parameters file')
+# @click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001_pretrain_condecaytask1e-7.json', help='JSON parameters file')
+@click.option('--param_file', default='params/binmatr2_15_8s_sgdadam001+0005_pretrain_condecayall1e-5_comeback.json', help='JSON parameters file')
 @click.option('--if_debug/--not_debug', default=True, help='Whether to store results in runs_debug')
-@click.option('--conn_counts_file', default='connstest.txt', help='Path to store number of activated connections '
+@click.option('--conn_counts_file', default='', help='Path to store number of activated connections '
                                                                   'instead of writing to tensorboard'
                                                                   'If empty, tensorboard will be used')
 def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, overwrite_lambda_reg=None, overwrite_weight_decay=None):
-    print("Approx. optimal weights 0.89 0.01 0.1 (S, I, D) - from https://arxiv.org/pdf/1705.07115.pdf")
-    # with open('configs_mid_img.json') as config_params:
-    with open('configs.json') as config_params:
-    # with open('configs_big_img.json') as config_params:
-        configs = json.load(config_params)
-
+    # print("Approx. optimal weights 0.89 0.01 0.1 (S, I, D) - from https://arxiv.org/pdf/1705.07115.pdf")
     with open(param_file) as json_params:
         params = json.load(json_params)
+
+    if params['input_size'] == 'default':
+        config_path = 'configs.json'
+    elif params['input_size'] == 'bigimg':
+        config_path = 'configs_big_img.json'
+    elif params['input_size'] == 'biggerimg':
+        config_path = 'configs_bigger_img.json'
+
+    with open(config_path) as config_params:
+        configs = json.load(config_params)
 
     def get_log_dir_name(params):
         exp_identifier = []
@@ -73,9 +82,6 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
             print(log_dir_name_full)
 
         print_proper_log_dir_name()
-        #
-        # if len(log_dir_name) > 255:
-        #     log_dir_name = '/mnt/antares_raid/home/awesomelemon/{}/{}'.format(run_dir_name, time_str)
 
         return log_dir_name, time_str
 
@@ -102,7 +108,6 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
     if if_use_pretrained_resnet:
         model_rep_dict = model['rep'].state_dict()
         def rename_key(key):
-            old_key = key
             key = re.sub('downsample', 'shortcut', key)
             if False:
                 key = re.sub('(layer[34].0.conv1.)', '\g<0>ordinary_conv.', key)
@@ -131,7 +136,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         model['rep'].load_state_dict(pretrained_dict)
 
 
-    if_continue_training = True
+    if_continue_training = False
     if if_continue_training:
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_10_on_December_06/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3_4_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_04_on_December_10/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|___5_model.pkl'
@@ -146,12 +151,14 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_42_on_April_17/optimizer=SGD|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=True|use_pretrained_17_model.pkl'
         # param_file = 'params/binmatr2_8_8_8_sgd001_pretrain_fc_consontop.json'
         save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_16_model.pkl'
+        print('Continuing training from the following path:')
+        print(save_model_path)
         model = load_trained_model(param_file, save_model_path, if_restore_connectivities=True)
 
     model_params = []
-    if_freeze_normal_params_only = True
+    if_freeze_normal_params_only = params['freeze_all_but_conns']
 
-    print('setting BatchNorm to eval')
+    # print('setting BatchNorm to eval')
     def set_bn_to_eval(m):
         classname = m.__class__.__name__
         if classname.find('BatchNorm') != -1:
@@ -228,15 +235,13 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
     error_sum_min = 1.0  # highest possible error on the scale from 0 to 1 is 1
 
     # train2_loader_iter = iter(train2_loader)
-    NUM_EPOCHS = 60
+    NUM_EPOCHS = 45
     print(f'NUM_EPOCHS={NUM_EPOCHS}')
     n_iter = 0
 
     scale = {}
     for t in tasks:
         scale[t] = float(params['scales'][t])
-
-        #store_conn_counts_path
 
     def write_connectivities(n_iter):
         if conn_counts_file == '':
@@ -260,7 +265,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
                 f.write('\n')
 
 
-    torch.autograd.set_detect_anomaly(True)
+    # torch.autograd.set_detect_anomaly(True)
     for epoch in range(NUM_EPOCHS):
         start = timer()
         print('Epoch {} Started'.format(epoch))
@@ -322,10 +327,10 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
                 else:
                     loss_reg = lambda_reg * torch.norm(torch.cat([model['rep'].connectivities[-1].view(-1)]), 1)
 
-                if epoch == 0:
-                    print('ACHTUNG! NOW L1 is applied immediately! Only for connections-only learning!')
-                # if epoch < 5:
-                #     loss_reg *= 0
+                # if epoch == 0:
+                #     print('ACHTUNG! NOW L1 is applied immediately! Only for connections-only learning!')
+                if epoch < 5:
+                    loss_reg *= 0
             loss = loss_reg
             loss_reg_value = loss_reg.item()
             reps = model['rep'](images)
@@ -409,7 +414,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         # writer.add_scalar('validation_loss', tot_loss['all'] / num_val_batches / len(tasks), n_iter)
         # todo: I think old way of calculating validation loss was wrong, because we also divided l1 loss by the number of tasks
         writer.add_scalar('validation_loss', tot_loss['all'] / num_val_batches, n_iter)
-        writer.add_scalar('validation_loss_minus_l1_reg_loss', (tot_loss['all'] ) / num_val_batches - tot_loss['l1_reg'], n_iter)
+        writer.add_scalar('validation_loss_minus_l1_reg_loss', (tot_loss['all'] - tot_loss['l1_reg']) / num_val_batches , n_iter)
         # writer.add_scalar('l1_reg_loss', tot_loss['l1_reg'] / num_val_batches, n_iter)
 
         # write scales to log
