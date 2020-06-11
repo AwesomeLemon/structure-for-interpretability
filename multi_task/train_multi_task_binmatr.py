@@ -39,7 +39,7 @@ cudnn.enabled = True
 # @click.option('--param_file', default='params/binmatr2_64_64_128_128_256_256_512_512_sgdadam0004_pretrain_condecayall2e-6_bigimg.json', help='JSON parameters file')
 # @click.option('--param_file', default='params/binmatr2_4_4_4_4_4_4_4_4_sgdadam0004_pretrain_fc_bigimg.json', help='JSON parameters file')
 # @click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001_pretrain_condecaytask1e-7.json', help='JSON parameters file')
-@click.option('--param_file', default='params/binmatr2_15_8s_sgdadam001+0005_pretrain_condecayall1e-5_comeback.json', help='JSON parameters file')
+@click.option('--param_file', default='params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_fc_bigimg_consontop.json', help='JSON parameters file')
 @click.option('--if_debug/--not_debug', default=True, help='Whether to store results in runs_debug')
 @click.option('--conn_counts_file', default='', help='Path to store number of activated connections '
                                                                   'instead of writing to tensorboard'
@@ -133,10 +133,15 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
 
         # model_rep_dict.update(pretrained_dict)
         pretrained_dict['conv1.weight'] = model_rep_dict['conv1.weight'] # this is the only difference between them, as of now. If there are any missing or extraneous keys, Pytorch throws an exception
+        #actually, after I enabled biases, which are not in pretrained dict, I need to add them too
+        for op_name, op_weight in model_rep_dict.items():
+            if ('bias' in op_name) and ('bn' not in op_name):
+                print(op_name)
+                pretrained_dict[op_name] = op_weight
         model['rep'].load_state_dict(pretrained_dict)
 
 
-    if_continue_training = False
+    if_continue_training = True
     if if_continue_training:
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_10_on_December_06/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3_4_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_04_on_December_10/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|___5_model.pkl'
@@ -150,7 +155,8 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         #     model[t].load_state_dict(state[key_name])
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_42_on_April_17/optimizer=SGD|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=True|use_pretrained_17_model.pkl'
         # param_file = 'params/binmatr2_8_8_8_sgd001_pretrain_fc_consontop.json'
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_16_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_16_model.pkl'
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_46_on_June_08/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay_22_model.pkl'
         print('Continuing training from the following path:')
         print(save_model_path)
         model = load_trained_model(param_file, save_model_path, if_restore_connectivities=True)
@@ -168,7 +174,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         if if_freeze_normal_params_only:
             model[m].apply(set_bn_to_eval)
 
-        cur_params = model[m].parameters()
+        cur_params = list(model[m].parameters())
         if if_freeze_normal_params_only:
             for param in cur_params:
                 param.requires_grad = False
@@ -181,6 +187,10 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
             for conn in model['rep'].connectivities:
                 conn *= 0.75
                 conn.requires_grad = True
+
+        for name, param in model['rep'].named_parameters():
+            if 'bias' in name:
+                param.requires_grad = True
 
     #todo: remove freezing
     # for name, param in model['rep'].named_parameters():
@@ -235,7 +245,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
     error_sum_min = 1.0  # highest possible error on the scale from 0 to 1 is 1
 
     # train2_loader_iter = iter(train2_loader)
-    NUM_EPOCHS = 45
+    NUM_EPOCHS = 60
     print(f'NUM_EPOCHS={NUM_EPOCHS}')
     n_iter = 0
 
@@ -428,6 +438,8 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
                      'connectivities': model['rep'].connectivities,
                      'optimizer_state': optimizer.state_dict()
                      }
+            if hasattr(model['rep'], 'connectivity_comeback_multipliers'):
+                state['connectivity_comeback_multipliers'] = model['rep'].connectivity_comeback_multipliers
             for t in tasks:
                 key_name = 'model_{}'.format(t)
                 state[key_name] = model[t].state_dict()

@@ -58,9 +58,15 @@ def get_model(params):
                 if not (block_to_use == binmatr2_multi_faces_resnet.BasicBlock): #i.e. already overriden
                     raise ValueError("Contradicting params: which block to use?")
 
-            if_enable_bias = 'if_enable_bias' in params
+            if_enable_bias = False #note that meaning of this changed from post-hoc bias addition to before-training setting of whether to learn bias
+            if 'if_enable_bias' in params:
+                if_enable_bias = params['if_enable_bias']
             aux_conns = None
             replace_constants_last_layer_mode = None
+
+            if 'input_size' not in params:
+                print('Warning! Setting input size to be default')
+                params['input_size'] = 'default'
 
             if 'replace_constants_last_layer_mode' in params:
                 replace_constants_last_layer_mode = params['replace_constants_last_layer_mode']

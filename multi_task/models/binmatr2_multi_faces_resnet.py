@@ -105,7 +105,7 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
         connectivity1, connectivity2 = connectivity
         if connectivity1 is None:
-            self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+            self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=if_enable_bias)
         else:
             self.conv1 = MaskedConv2d(in_planes, planes, connectivity=connectivity1, kernel_size=3, stride=stride,
                                       padding=1, bias=if_enable_bias)
@@ -118,7 +118,7 @@ class BasicBlock(nn.Module):
                 self.conv2 = MaskedConv2d(planes, planes, connectivity=connectivity2, kernel_size=3, stride=1,
                                           padding=1, bias=False)
             else:
-                self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+                self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=if_enable_bias)
         else:
             self.conv2 = MaskedConv2d(planes, planes, connectivity=connectivity2, kernel_size=3, stride=1, padding=1,
                                       bias=if_enable_bias)
@@ -129,7 +129,7 @@ class BasicBlock(nn.Module):
             # TODO: I don't know if in case of BinarizeBySample having sampling done in 2 places independently helps or hinders.
             if connectivity1 is None:
                 conv_to_use = nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride,
-                                        bias=False)
+                                        bias=if_enable_bias)
             else:
                 conv_to_use = MaskedConv2d(in_planes, self.expansion * planes, connectivity=connectivity1,
                                            kernel_size=1, stride=stride, bias=if_enable_bias)
@@ -540,19 +540,19 @@ class BinMatrResNet(nn.Module):
         if_restore_aux = auxillary_connectivities_for_id_shortcut is not None
         self.replace_constants_last_layer_mode = replace_constants_last_layer_mode
 
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=if_enable_bias)
         self.bn1 = nn.BatchNorm2d(64)
         if len(num_chunks) == 3:
             if if_restore_aux:
                 raise NotImplementedError(f'Loading of auxillary connctivities not implemented for {num_chunks} chunks')
-            self.layer1 = self._make_layer(block, 64 * width_mul, num_blocks[0], 1, [(None, None)] * num_blocks[0])
-            self.layer2 = self._make_layer(block, 128 * width_mul, num_blocks[1], 2, [(None, None)] * num_blocks[1])
+            self.layer1 = self._make_layer(block, 64 * width_mul, num_blocks[0], 1, [(None, None)] * num_blocks[0], if_enable_bias)
+            self.layer2 = self._make_layer(block, 128 * width_mul, num_blocks[1], 2, [(None, None)] * num_blocks[1], if_enable_bias)
             # layer2 is separated into 8 blocks after this, at the start of layer3
             self.layer3 = self._make_layer(block, 256 * width_mul, num_blocks[2], 2,
-                                           [(self.connectivities[0], None)] + [(None, None)] * (num_blocks[2] - 1))
+                                           [(self.connectivities[0], None)] + [(None, None)] * (num_blocks[2] - 1), if_enable_bias)
             # layer3 is separated into 8 blocks after this, at the start of layer4
             self.layer4 = self._make_layer(block, 512 * width_mul, num_blocks[3], 2,
-                                           [(self.connectivities[1], None)] + [(None, None)] * (num_blocks[3] - 1))
+                                           [(self.connectivities[1], None)] + [(None, None)] * (num_blocks[3] - 1), if_enable_bias)
             # layer4 is separated into 8 blocks during forward pass, when we get 40 outputs
             # it is there where connectivities[-1] is used
         elif len(num_chunks) == 8:
@@ -665,10 +665,10 @@ class BinMatrResNet(nn.Module):
             # self.fake_task_conn = task_conn
         self.connectivities.append(task_conn)
 
-        # if True:
-        #     self.connectivity_comeback_multipliers = nn.ModuleList()
-        #     for conn in self.connectivities:
-        #         self.connectivity_comeback_multipliers(torch.ones_like(conn).to(device))
+        if True:
+            self.connectivity_comeback_multipliers = []
+            for conn in self.connectivities:
+                self.connectivity_comeback_multipliers.append(torch.ones_like(conn).to(device))
 
     def forward(self, x):  # , ignored_filters_per_layer):
         if True:
@@ -677,16 +677,16 @@ class BinMatrResNet(nn.Module):
                 min_val = 0.5
                 with torch.no_grad():
                     for connectivity, conn_comeback_mul in zip(self.connectivities, self.connectivity_comeback_multipliers):
-                        if False:
+                        if True:
                             connectivity[connectivity <= min_val] = min_val
                         else:
                             idx = connectivity <= min_val
                             additive = (0.005 - 0.01 * (min_val - connectivity).abs()[idx]) * 0.05
-                            # cur_comeback_mul = conn_comeback_mul[idx]
-                            connectivity[idx] += additive #* cur_comeback_mul
-                            # cur_comeback_mul *= 0.99
-
-                        connectivity[connectivity > max_val] = max_val
+                            cur_comeback_mul = conn_comeback_mul[idx]
+                            connectivity[idx] += additive * cur_comeback_mul
+                            conn_comeback_mul[idx] *= 0.999
+                        if False:
+                            connectivity[connectivity > max_val] = max_val
                         # connectivity.data.div_(torch.sum(connectivity.data, dim=1, keepdim=True))
         else:
             if not self.if_fully_connected:

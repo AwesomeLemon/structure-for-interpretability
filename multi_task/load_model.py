@@ -41,7 +41,7 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
         params['if_additives_user'] = 'Yep'
 
     if if_enable_bias:
-        params['if_enable_bias'] = 'Yep'
+        params['if_enable_bias'] = True
     params['replace_constants_last_layer_mode'] = replace_constants_last_layer_mode
 
     model = model_selector_automl.get_model(params)
@@ -268,15 +268,17 @@ if __name__ == '__main__':
     # param_file = 'params/binmatr2_8_8_8_sgd001_pretrain_fc.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_37_on_May_15/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_128|_128|_256|_256|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=2e-06|co_100_model.pkl'
     # param_file = 'params/binmatr2_64_64_128_128_256_256_512_512_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_53_on_May_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_40_model.pkl'
-    param_file = 'params/binmatr2_filterwise_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_53_on_May_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_40_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_35_on_May_20/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_condecayall2e-6.json'
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_06_on_June_08/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|conn_45_model.pkl'
+    param_file = 'params/binmatr2_15_32s_sgdadam001+0005_pretrain_bias_nocondecay_comeback.json'
 
-    # config_name = 'configs.json'
-    config_name = 'configs_big_img.json'
+    config_name = 'configs.json'
+    # config_name = 'configs_big_img.json'
     # config_name = 'configs_bigger_img.json'
-    if True:
+    if False:
         # convert_useless_connections_to_biases(param_file, save_model_path, config_name)
         # test_biased_net(param_file, save_model_path, config_name)
         convert_useless_connections_to_additives(param_file, save_model_path, config_name)
