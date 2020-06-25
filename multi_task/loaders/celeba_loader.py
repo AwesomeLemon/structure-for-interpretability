@@ -9,7 +9,8 @@ import glob
 from torch.utils import data
 
 class CELEBA(data.Dataset):
-    def __init__(self, root, split="train", is_transform=False, img_size=(32, 32), augmentations=None):
+    def __init__(self, root, split="train", is_transform=False, img_size=(32, 32), augmentations=None,
+                 subtract_mean=True):
         """__init__
 
         :param root:
@@ -22,6 +23,7 @@ class CELEBA(data.Dataset):
         self.split = split
         self.is_transform = is_transform
         self.augmentations = augmentations
+        self.subtract_mean = subtract_mean
         self.n_classes =  40
         self.img_size = img_size if isinstance(img_size, tuple) else (img_size, img_size)
         self.mean = np.array([73.15835921, 82.90891754, 72.39239876]) # TODO(compute this mean)
@@ -49,7 +51,7 @@ class CELEBA(data.Dataset):
                 # selected_files = list(filter(lambda x: x.split(' ')[1] == '0', fl))
                 # selected_files = selected_files[int(len(selected_files) * (0.9)):]
             elif 'val' in self.split:
-                selected_files =  list(filter(lambda x:x.split(' ')[1]=='1', fl))#[:77]
+                selected_files =  list(filter(lambda x:x.split(' ')[1]=='1', fl))#[:78]
             elif 'test' in self.split:
                 selected_files =  list(filter(lambda x:x.split(' ')[1]=='2', fl))
             selected_file_names = list(map(lambda x:re.sub('jpg', 'png', x.split(' ')[0]), selected_files))
@@ -94,9 +96,10 @@ class CELEBA(data.Dataset):
         """transform
         Mean substraction, remap to [0,1], channel order transpose to make Torch happy
         """
-        img = img[:, :, ::-1]
+        img = img[:, :, ::-1] #apparently BGR is used for some reason. Fine, whatever. But this screws up pretrained weights.
         img = img.astype(np.float64)
-        img -= self.mean
+        if self.subtract_mean:
+            img -= self.mean
         img = skimage.transform.resize(img, (self.img_size[0], self.img_size[1]), order=3)
         # Resize scales images from 0 to 255, thus we need
         # to divide by 255.0

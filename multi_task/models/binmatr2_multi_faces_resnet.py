@@ -319,6 +319,12 @@ class BasicBlockAdditivesCreator(BasicBlock):
                 if not (torch.isclose(x[0, i, 4, 4], x[17, i, 5, 3], rtol=1e-4)):
                     print('!!!', i)
         if type(self.conv1) is MaskedConv2d:
+            if self.conv1.ordinary_conv.bias is not None:
+                conv1_bias_stored = self.conv1.ordinary_conv.bias.detach().clone()
+                self.conv1.ordinary_conv.bias *= 0
+                if if_projection_shortcut:
+                    shortcut_bias_stored = shortcut_modules[0].ordinary_conv.bias.detach().clone()
+                    shortcut_modules[0].ordinary_conv.bias *= 0
             for i in const_features_input_idx:
                 connected_to_i_idx = torch.where(self.conv1.connectivity[0][:, i] > 0.5)[0]
 
@@ -353,6 +359,10 @@ class BasicBlockAdditivesCreator(BasicBlock):
                 self.conv1.connectivity[0].data = temp.data
                 self.conv1.connectivity[0][:, i] *= 0.0
 
+            if self.conv1.ordinary_conv.bias is not None:
+                self.conv1.ordinary_conv.bias.data = conv1_bias_stored
+                if if_projection_shortcut:
+                    shortcut_modules[0].ordinary_conv.bias.data = shortcut_bias_stored
             post_conv1 = self.conv1(pre_conv1)
             for key, value in additives_dict_cur['conv1'].items():
                 post_conv1[:, key:key+1, :, :] += additives_dict_cur['conv1'][key]
@@ -363,6 +373,9 @@ class BasicBlockAdditivesCreator(BasicBlock):
             post_conv1_bn = F.relu(self.bn1(post_conv1))
 
         if type(self.conv2) is MaskedConv2d:
+            if self.conv2.ordinary_conv.bias is not None:
+                conv2_bias_stored = self.conv2.ordinary_conv.bias.detach().clone()
+                self.conv2.ordinary_conv.bias *= 0
             const_features_conv1_idx = []
             for i in range(self.conv1.out_channels):
                 cur_feature = post_conv1_bn[:, i]
@@ -391,6 +404,8 @@ class BasicBlockAdditivesCreator(BasicBlock):
                 self.conv2.connectivity[0].data = temp.data
                 self.conv2.connectivity[0][:, i] *= 0.0
 
+            if self.conv2.ordinary_conv.bias is not None:
+                self.conv2.ordinary_conv.bias.data = conv2_bias_stored
             post_conv2 = self.conv2(post_conv1_bn)
             for key, value in additives_dict_cur['conv2'].items():
                 post_conv2[:, key:key+1, :, :] += additives_dict_cur['conv2'][key]
@@ -428,17 +443,22 @@ class BasicBlockMockAdditivesUser(BasicBlock):
     additives_dict = {}
 
     def __init__(self, in_planes, planes, stride=1, connectivity=(None, None, None), if_enable_bias=False):
-        super().__init__(in_planes, planes, stride, connectivity[:-1], if_enable_bias)
+        if len(connectivity) == 3:
+            super().__init__(in_planes, planes, stride, connectivity[:-1], if_enable_bias)
+        else:
+            print('Less connectivities than expected')
+            super().__init__(in_planes, planes, stride, connectivity, if_enable_bias)
 
         self.has_projection_shortcut = True
-        if True and (len(list(self.shortcut.children())) == 0):  # is identity shortcut
+        if (len(list(self.shortcut.children())) == 0):  # is identity shortcut
             self.has_projection_shortcut = False
-            if connectivity[-1] is not None:
-                self.shortcut = BasicBlockMock.SparseIdentityShortcut(connectivity[-1])
-            else:
-                if not ((connectivity[0] is None) and (connectivity[1] is None)):
-                    raise ValueError('If identity shortcut, either all 3 conns are not-None, or all 3 are None. '
-                                     'This was violated.')
+            if len(connectivity) == 3:
+                if connectivity[-1] is not None:
+                    self.shortcut = BasicBlockMock.SparseIdentityShortcut(connectivity[-1])
+                else:
+                    if not ((connectivity[0] is None) and (connectivity[1] is None)):
+                        raise ValueError('If identity shortcut, either all 3 conns are not-None, or all 3 are None. '
+                                         'This was violated.')
 
         self.id = BasicBlockMockAdditivesUser.id
         BasicBlockMockAdditivesUser.id += 1
@@ -677,14 +697,15 @@ class BinMatrResNet(nn.Module):
                 min_val = 0.5
                 with torch.no_grad():
                     for connectivity, conn_comeback_mul in zip(self.connectivities, self.connectivity_comeback_multipliers):
-                        if True:
-                            connectivity[connectivity <= min_val] = min_val
+                        if False:
+                            connectivity[connectivity <= min_val] = 0.0
                         else:
-                            idx = connectivity <= min_val
-                            additive = (0.005 - 0.01 * (min_val - connectivity).abs()[idx]) * 0.05
-                            cur_comeback_mul = conn_comeback_mul[idx]
-                            connectivity[idx] += additive * cur_comeback_mul
-                            conn_comeback_mul[idx] *= 0.999
+                            if self.training: # because we don't wanna change connections during validation
+                                idx = connectivity <= min_val
+                                additive = (0.005 - 0.01 * (min_val - connectivity).abs()[idx]) * 0.05
+                                cur_comeback_mul = conn_comeback_mul[idx]
+                                connectivity[idx] += additive * cur_comeback_mul
+                                conn_comeback_mul[idx] *= 0.999
                         if False:
                             connectivity[connectivity > max_val] = max_val
                         # connectivity.data.div_(torch.sum(connectivity.data, dim=1, keepdim=True))

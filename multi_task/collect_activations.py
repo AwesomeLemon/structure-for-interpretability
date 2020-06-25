@@ -29,12 +29,14 @@ class ActivityCollector():
 
 
     def img_from_np_to_torch(self, img):
-        # img = img[:, :, ::-1]
+        img = img[:, :, ::-1]
         img = img.astype(np.float64)
         if self.use_my_model:
-            img -= np.array([73.15835921, 82.90891754, 72.39239876])
+            img -= np.array([0.38302392, 0.42581415, 0.50640459]) * 255#np.array([73.15835921, 82.90891754, 72.39239876])
+            std = [0.2903, 0.2909, 0.3114]
         else:
             img -= np.array([0.485, 0.456, 0.406]) * 255
+            std = [0.229, 0.224, 0.225]
 
         img = skimage.transform.resize(img, (self.size_0, self.size_1), order=3)
 
@@ -44,10 +46,8 @@ class ActivityCollector():
         # HWC -> CWH
         img = img.transpose(2, 0, 1)
 
-        if not self.use_my_model or True:
-            std = [0.229, 0.224, 0.225]
-            for channel, _ in enumerate(img):
-                img[channel] /= std[channel]
+        for channel, _ in enumerate(img):
+            img[channel] /= std[channel]
 
         img = torch.from_numpy(img).float()
         img.unsqueeze_(0)
@@ -181,7 +181,7 @@ class ActivityCollector():
     def get_target_probs_per_class(self, target: int, n_images: int, folder_suffix):
         probs_sum = None
         for i in range(n_images):
-            probs = self.get_output_probs(f'generated_10_{folder_suffix}/{target}_{i}.jpg')
+            probs = self.get_output_probs(f'generated_separate_{folder_suffix}/{target}_{i}.jpg')
             probs = np.array(probs)
             if probs_sum is None:
                 probs_sum = probs
@@ -201,11 +201,11 @@ class ActivityCollector():
 
     def get_target_probs_many(self, targets, n_images, folder_suffix):
         n_tasks = 40
-        res = np.ones((n_tasks, n_tasks))
+        res = np.ones((len(targets), n_tasks))
         targets = [int(target) for target in targets]
-        for target in targets:
+        for i, target in enumerate(targets):
             print(target)
-            res[target] = self.get_target_probs_per_class(target, n_images, folder_suffix)
+            res[i] = self.get_target_probs_per_class(target, n_images, folder_suffix)
         return res
 
     def visualize_feature_distribution(self, targets, n_images, folder_suffix):
@@ -265,48 +265,45 @@ class ActivityCollector():
         ax = plt.gca()
         ax.set_yticks(np.arange(.5, len(targets), 1))
         ax.set_yticklabels([celeba_dict[target] for target in targets])
-        ax.set_xticks(np.arange(.5, len(targets), 1))
-        ax.set_xticklabels([celeba_dict[target] for target in targets], rotation=90)
+        all = range(40)
+        ax.set_xticks(np.arange(.5, len(all), 1))
+        ax.set_xticklabels([celeba_dict[i] for i in all], rotation=90)
         cb = plt.colorbar(fraction=0.03, pad=0.01)
         cb.ax.tick_params(labelsize=6)
         plt.savefig(f'probs_{folder_suffix}.svg', format='svg', bbox_inches='tight', pad_inches=0, dpi=200)
         # plt.show()
 
 if __name__ == '__main__':
-    use_my_model = True
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_21_on_November_27/optimizer=Adam|batch_size=256|lr=0.0005|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3___0.025|__4___0._1_model.pkl'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_53_on_February_11/optimizer=Adam|batch_size=256|lr=0.005|lambda_reg=0.005|chunks=[4|_4|_4]|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025_42_model.pkl'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_37_on_February_19/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True_6_model.pkl'
+    # param_file = 'old_params/sample_all.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_47_on_February_12/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.005|chunks=[4|_4|_4]|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.02_10_model.pkl'
+    # param_file = 'params/bigger_reg_4_4_4.json'
 
-    if use_my_model:
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_21_on_November_27/optimizer=Adam|batch_size=256|lr=0.0005|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3___0.025|__4___0._1_model.pkl'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_53_on_February_11/optimizer=Adam|batch_size=256|lr=0.005|lambda_reg=0.005|chunks=[4|_4|_4]|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025_42_model.pkl'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_37_on_February_19/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True_6_model.pkl'
-        # param_file = 'old_params/sample_all.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_47_on_February_12/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.005|chunks=[4|_4|_4]|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.02_10_model.pkl'
-        # param_file = 'params/bigger_reg_4_4_4.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_05_on_April_25/optimizer=SGD_Adam|batch_size=96|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|if__16_model.pkl'
+    # param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4_bigimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_06_on_April_26/optimizer=SGD_Adam|batch_size=52|lr=0.002|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|_27_model.pkl'
+    # param_file = 'params/binmatr2_16_16_4_sgdadam0002_pretrain_condecaytask1e-4_biggerimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_25_on_April_30/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|connectivities_l1_all=False|if__23_model.pkl'
+    # param_file = 'params/binmatr2_16_16_4_sgdadam0004_pretrain_fc_bigimg.json'
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_07_on_June_22/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
+    param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_rescaled.json'
 
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_05_on_April_25/optimizer=SGD_Adam|batch_size=96|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|if__16_model.pkl'
-        # param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4_bigimg.json'
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_06_on_April_26/optimizer=SGD_Adam|batch_size=52|lr=0.002|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|_27_model.pkl'
-        param_file = 'params/binmatr2_16_16_4_sgdadam0002_pretrain_condecaytask1e-4_biggerimg.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_25_on_April_30/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|connectivities_l1_all=False|if__23_model.pkl'
-        # param_file = 'params/binmatr2_16_16_4_sgdadam0004_pretrain_fc_bigimg.json'
+    trained_model = load_trained_model(param_file, save_model_path)
 
-        trained_model = load_trained_model(param_file, save_model_path)
+    with open(param_file) as json_params:
+        params = json.load(json_params)
+    if params['input_size'] == 'default':
+        im_size = (64, 64)
+    elif params['input_size'] == 'bigimg':
+        im_size = (128, 128)
+    elif params['input_size'] == 'biggerimg':
+        im_size = (192, 168)
 
-        with open(param_file) as json_params:
-            params = json.load(json_params)
-        if params['input_size'] == 'default':
-            im_size = (64, 64)
-        elif params['input_size'] == 'bigimg':
-            im_size = (128, 128)
-        elif params['input_size'] == 'biggerimg':
-            im_size = (192, 168)
-    else:
-        target_class = 130  # Flamingo
-        trained_model = models.alexnet(pretrained=True).to(device)
-        im_size = (224, 224)
-
+    model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
     ac = ActivityCollector(trained_model, im_size)
     # ac.compare_AM_images(31, 12)
     # ac.visualize_feature_distribution(range(40), 10, 'binmatr')
-    ac.visualize_feature_histograms_per_task(range(40), 10, 'binmatr')
-    # ac.visualize_probs_distribution(range(40), 10, 'binmatr')
+    # ac.visualize_feature_histograms_per_task(range(40), 10, 'binmatr')
+    ac.visualize_probs_distribution(range(40), 10, model_name_short)

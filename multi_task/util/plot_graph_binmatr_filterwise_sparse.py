@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 from collections import defaultdict
 from util import celeba_dict
+from multi_task.util.util import layers
+
 
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_24_on_April_19/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0003|connectivities_l1_all=False|if_15_model.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_05_on_April_25/optimizer=SGD_Adam|batch_size=96|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|if_' \
@@ -18,11 +20,20 @@ from util import celeba_dict
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_35_on_May_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_18_on_May_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_49_on_May_25/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
-save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_53_on_May_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1' \
-                  r'|weight_de_49_model_additives.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_53_on_May_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1' \
+#                   r'|weight_de_49_model_additives.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_44_on_May_27/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1' \
 #                   r'|weight_de_60_model.pkl'
 
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_29_on_June_15/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_49_model.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_50_on_June_17/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_30_on_June_18/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_57_on_June_19/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_76_model_additives.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_41_on_June_21/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_07_on_June_22/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_26_on_June_23/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_50_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
+save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
 
 if_load_unprocessed_conns = True
 if if_load_unprocessed_conns:
@@ -195,7 +206,7 @@ else:
         c.attr(style='filled', color='lightgrey')
         c.node_attr.update(style='filled', color='white')
         for i in range(attr_num):
-            c.node(f'fc_{i}', label=str(attr_names_dict[i].replace("_", r"\n")))
+            c.node(f'fc_{i}', label=str(attr_names_dict[i].replace("_", r"\n")), image='1_1.jpg')
 
         # num_chains = 1
         # l = 40
@@ -260,8 +271,12 @@ for j in range(len(learning_scales_binary)):
     with g.subgraph(name=f'cluster_{j}') as c:
         c.attr(style='filled', color='lightgrey')
         c.node_attr.update(style='filled', color='white')
+        model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
+        im_folder_path = f'generated_imshow_{model_name_short}'
         for node in actually_good_nodes[j]:
-            c.node(node)
+            layer_idx = int(node[:node.find('_')])
+            neuron_idx = node[node.find('_') + 1:]
+            c.node(node, image=f'{im_folder_path}/{layers[layer_idx]}/{neuron_idx}.jpg')
 
 for (src, dst) in edges_to_add:
     g.edge(src, dst)
@@ -311,6 +326,8 @@ output = {'connectivities': learning_scales_binary_out,
           'auxillary_connectivities_for_id_shortcut': auxillary_connectivities_for_id_shortcut_out}
 
 torch.save(output, 'visualized_connectivities.pkl')
+np.save('actually_good_nodes.npy', actually_good_nodes)
+
 print('Potential danger: for projection shortcut connectivity is shared with conv1. Thus I enable it when either of those 2 connections exist')
 print("Or not. Suppose we have 2_16 -> 4_107. In the real network there'll also be 2_16 -> 3_107. If it had another incoming connections, "
       "it wouldn't be deleted unless it also didn't have outgoing connections. But if it had outgoing connections, it wouldn't be deleted"

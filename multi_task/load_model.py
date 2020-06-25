@@ -10,6 +10,8 @@ import datasets as datasets
 import metrics as metrics
 import model_selector_automl as model_selector_automl
 from util.util import celeba_dict
+import pandas
+import numpy as np
 
 
 def load_trained_model(param_file, save_model_path, if_restore_connectivities=True,
@@ -121,16 +123,29 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
     # np.where(np.abs(model['35'].linear.weight.cpu().detach().numpy()[0]) > 0.1)[0]
     return model
 
-def eval_trained_model(param_file, model, config_name):
-    with open(config_name) as config_params:
-        configs = json.load(config_params)
-
+def eval_trained_model(param_file, model, if_store_val_pred=False):
     with open(param_file) as json_params:
         params = json.load(json_params)
 
+    if params['input_size'] == 'default':
+        config_path = 'configs.json'
+    elif params['input_size'] == 'bigimg':
+        config_path = 'configs_big_img.json'
+    elif params['input_size'] == 'biggerimg':
+        config_path = 'configs_bigger_img.json'
+
+    with open(config_path) as config_params:
+        configs = json.load(config_params)
+
     metric = metrics.get_metrics(params)
 
-    tst_loader = datasets.get_test_dataset(params, configs)
+    if not if_store_val_pred:
+        tst_loader = datasets.get_test_dataset(params, configs)
+        loader = tst_loader
+    else:
+        _, val_loader, _ = datasets.get_dataset(params, configs)
+        loader = val_loader
+        preds = [[] for _ in range(40)]
 
     tasks = params['tasks']
     all_tasks = configs[params['dataset']]['all_tasks']
@@ -143,7 +158,7 @@ def eval_trained_model(param_file, model, config_name):
         # print('ACHTUNG! Setting first connectivities to 0 (because they weren't saved)')
         # model['rep'].connectivities[0] *= 0
         # model['rep'].connectivities[1] *= 0
-        for i, batch_val in enumerate(tst_loader):
+        for i, batch_val in enumerate(loader):
             if i % 10 == 0:
                 print(i)
 
@@ -177,9 +192,19 @@ def eval_trained_model(param_file, model, config_name):
                 # tot_loss['all'] += loss_t.item()
                 # tot_loss[t] += loss_t.item()
                 metric[t].update(out_t_val, labels_val[t])
+                if if_store_val_pred:
+                    labels = out_t_val.data.max(1, keepdim=True)[1]
+                    temp = list(labels.detach().cpu().numpy().squeeze())
+                    preds[i] += temp
                 # print(out_t_val)
                 # print(labels_val[t])
                 # print(metric[t].get_result())
+    if if_store_val_pred:
+        preds = np.array(preds).T
+        preds[preds == 0] = -1
+        print(preds.shape)
+        df = pandas.DataFrame({name:preds[:, i] for i, name in enumerate(celeba_dict.values())})
+        df.to_csv('predicted_labels_celeba.csv', sep=' ')
     error_sum = 0
     for t in tasks:
         metric_results = metric[t].get_result()
@@ -194,9 +219,9 @@ def eval_trained_model(param_file, model, config_name):
     print(error_sum * 100)
 
 
-def convert_useless_connections_to_biases(param_file, save_model_path, config_name):
+def convert_useless_connections_to_biases(param_file, save_model_path):
     model = load_trained_model(param_file, save_model_path, True, False, True)
-    eval_trained_model(param_file, model, config_name)
+    eval_trained_model(param_file, model)
 
     state = {'model_rep': model['rep'].state_dict(),
              'connectivities': model['rep'].connectivities}
@@ -209,9 +234,9 @@ def convert_useless_connections_to_biases(param_file, save_model_path, config_na
     new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_biased' + '.pkl'
     torch.save(state, new_save_model_path)
 
-def convert_useless_connections_to_additives(param_file, save_model_path, config_name):
+def convert_useless_connections_to_additives(param_file, save_model_path):
     model = load_trained_model(param_file, save_model_path, True, False, False, False, True, False, 'store')
-    eval_trained_model(param_file, model, config_name)
+    eval_trained_model(param_file, model)
 
     state = {'model_rep': model['rep'].state_dict(),
              'connectivities': model['rep'].connectivities,
@@ -229,12 +254,12 @@ def convert_useless_connections_to_additives(param_file, save_model_path, config
 def test_biased_net(param_file, save_model_path, config_name):
     new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_biased' + '.pkl'
     model = load_trained_model(param_file, new_save_model_path, True, True, False, True)
-    eval_trained_model(param_file, model, config_name)
+    eval_trained_model(param_file, model)
 
 def test_additives_net(param_file, save_model_path, config_name):
     new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_additives' + '.pkl'
     model = load_trained_model(param_file, new_save_model_path, True, True, False, False, True, True, 'restore')
-    eval_trained_model(param_file, model, config_name)
+    eval_trained_model(param_file, model)
 
 
 if __name__ == '__main__':
@@ -268,21 +293,37 @@ if __name__ == '__main__':
     # param_file = 'params/binmatr2_8_8_8_sgd001_pretrain_fc.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_37_on_May_15/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_128|_128|_256|_256|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=2e-06|co_100_model.pkl'
     # param_file = 'params/binmatr2_64_64_128_128_256_256_512_512_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_53_on_May_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_40_model.pkl'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_53_on_May_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_49_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_35_on_May_20/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_condecayall2e-6.json'
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_06_on_June_08/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|conn_45_model.pkl'
-    param_file = 'params/binmatr2_15_32s_sgdadam001+0005_pretrain_bias_nocondecay_comeback.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_06_on_June_08/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|conn_45_model.pkl'
+    # param_file = 'params/binmatr2_15_32s_sgdadam001+0005_pretrain_bias_nocondecay_comeback.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_55_on_June_13/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay_60_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_nobias_fc_bigimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_30_on_June_18/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_fc_bigimg_consontop_condecayall3e-5.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_57_on_June_19/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_76_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_bigimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_41_on_June_21/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_bigimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_07_on_June_22/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_rescaled.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_50_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled.json'
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
+    param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled2.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_43_on_June_24/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_rescaled3_bigimg.json'
 
-    config_name = 'configs.json'
+    # config_name = 'configs.json'
     # config_name = 'configs_big_img.json'
     # config_name = 'configs_bigger_img.json'
     if False:
         # convert_useless_connections_to_biases(param_file, save_model_path, config_name)
         # test_biased_net(param_file, save_model_path, config_name)
-        convert_useless_connections_to_additives(param_file, save_model_path, config_name)
-        # test_additives_net(param_file, save_model_path, config_name)
+        convert_useless_connections_to_additives(param_file, save_model_path)
+        # test_additives_net(param_file, save_model_path)
     else:
-        model = load_trained_model(param_file, save_model_path, True, False)
-        eval_trained_model(param_file, model, config_name)
+        model = load_trained_model(param_file, save_model_path, if_restore_connectivities=True)
+        eval_trained_model(param_file, model, True)

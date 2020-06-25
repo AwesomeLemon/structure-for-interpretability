@@ -27,6 +27,16 @@ celeba_dict = {0: '5_o_Clock_Shadow', 1: 'Arched_Eyebrows', 2: 'Attractive', 3: 
                31: 'Smiling', 32: 'Straight_Hair', 33: 'Wavy_Hair', 34: 'Wearing_Earrings', 35: 'Wearing_Hat',
                36: 'Wearing_Lipstick', 37: 'Wearing_Necklace', 38: 'Wearing_Necktie', 39: 'Young'}
 
+layers = ['layer1_0',
+          'layer1_1_conv1', 'layer1_1',
+          'layer2_0_conv1', 'layer2_0',
+          'layer2_1_conv1', 'layer2_1',
+          'layer3_0_conv1', 'layer3_0',
+          'layer3_1_conv1', 'layer3_1',
+          'layer4_0_conv1', 'layer4_0',
+          'layer4_1_conv1', 'layer4_1',
+          ]
+
 
 def pad_to_correct_shape(img, width, height):
     # return skimage.transform.resize(img, (width, width), order=3)

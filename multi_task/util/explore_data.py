@@ -2,8 +2,12 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
-df = pd.read_csv('list_attr_celeba.txt', sep='\s+', skiprows=1)
-print(dict(zip(range(40), df.columns.values)))
+if_true_cond_prob = False
+if if_true_cond_prob:
+    df = pd.read_csv('list_attr_celeba.txt', sep='\s+', skiprows=1)
+else:
+    df = pd.read_csv('predicted_labels_celeba.csv', sep='\s+') #14_53
+# print(dict(zip(range(40), df.columns.values)))
 
 #conditional probability P(attr2|attr1)
 cond_probs = np.ones((40, 40))
@@ -14,13 +18,20 @@ for i1 in range(len(df.columns.values)):
 
         df_attr1_holds = df[df[attr1] == 1]
         df_attr1_and_attr2_hold = df_attr1_holds[df_attr1_holds[attr2] == 1]
-        cond_probs[i1, i2] = len(df_attr1_and_attr2_hold) / float(len(df_attr1_holds))
-        print(cond_probs[i1, i2])
+        if len(df_attr1_holds) == 0:
+            cond_probs[i1, i2] = 1.0
+        else:
+            cond_probs[i1, i2] = len(df_attr1_and_attr2_hold) / float(len(df_attr1_holds))
+    print(i1, ':', len(df_attr1_holds))
 
 f = plt.figure(figsize=(10.80 * 1.5, 10.80 * 1.5))
 plt.tight_layout()
-plt.pcolormesh(cond_probs, figure=f, cmap='coolwarm')
-plt.title('Condtional probabilities P(column|row)')
+plt.pcolormesh(cond_probs, figure=f, cmap='viridis')#cmap='coolwarm'
+if if_true_cond_prob:
+    title = 'Conditional probabilities P(column|row)'
+else:
+    title = 'Model-based Conditional probabilities P(column|row)'
+plt.title(title)
 ax = plt.gca()
 ax.set_yticks(np.arange(.5, 40, 1))
 ax.set_yticklabels(df.columns.values)
@@ -28,7 +39,11 @@ ax.set_xticks(np.arange(.5, 40, 1))
 ax.set_xticklabels(df.columns.values, rotation=90)
 cb = plt.colorbar(fraction=0.03, pad=0.01)
 cb.ax.tick_params(labelsize=6)
-plt.savefig(f'celeba_cond_prob.svg', format='svg', bbox_inches='tight', pad_inches=0, dpi=200)
+if if_true_cond_prob:
+    path = f'celeba_cond_prob.svg'
+else:
+    path = f'celeba_cond_prob_modelA.svg'
+plt.savefig(path, format='svg', bbox_inches='tight', pad_inches=0, dpi=200)
 
 plt.show()
 
