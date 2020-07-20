@@ -39,7 +39,8 @@ cudnn.enabled = True
 # @click.option('--param_file', default='params/binmatr2_64_64_128_128_256_256_512_512_sgdadam0004_pretrain_condecayall2e-6_bigimg.json', help='JSON parameters file')
 # @click.option('--param_file', default='params/binmatr2_4_4_4_4_4_4_4_4_sgdadam0004_pretrain_fc_bigimg.json', help='JSON parameters file')
 # @click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001_pretrain_condecaytask1e-7.json', help='JSON parameters file')
-@click.option('--param_file', default='params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_fc_bigimg_consontop.json', help='JSON parameters file')
+# @click.option('--param_file', default='params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_fc_bigimg_consontop.json', help='JSON parameters file')
+@click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_nocondecayall_comeback_consontop_onlybushy.json', help='JSON parameters file')
 @click.option('--if_debug/--not_debug', default=True, help='Whether to store results in runs_debug')
 @click.option('--conn_counts_file', default='', help='Path to store number of activated connections '
                                                                   'instead of writing to tensorboard'
@@ -142,7 +143,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         model['rep'].load_state_dict(pretrained_dict)
 
 
-    if_continue_training = True
+    if_continue_training = False
     if if_continue_training:
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_10_on_December_06/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3_4_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_04_on_December_10/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|___5_model.pkl'
@@ -162,7 +163,11 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_03_on_June_11/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_07_on_June_22/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_50_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_43_on_June_24/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_43_on_June_24/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_22_on_June_26/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/19_15_on_June_28/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_50_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
         print('Continuing training from the following path:')
         print(save_model_path)
         model = load_trained_model(param_file, save_model_path, if_restore_connectivities=True)
@@ -176,15 +181,21 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         if classname.find('BatchNorm') != -1:
             m.eval()
 
+    # for m in list(model.keys()):
+    #     if m != '12' and m != 'rep':
+    #         print('This is temporary to figure out whether features are lost or just deactivated when a task is disowned')
+    #         del model[m]
+    #         continue
     for m in model:
         if if_freeze_normal_params_only:
             model[m].apply(set_bn_to_eval)
 
         cur_params = list(model[m].parameters())
         if if_freeze_normal_params_only:
+            # if m != '12':
+            #     print('This is temporary to figure out whether features are lost or just deactivated when a task is disowned')
             for param in cur_params:
                 param.requires_grad = False
-            #need tor unfreeze connectivitities
         model_params += cur_params
         model[m].to(device)
 
@@ -252,7 +263,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
     error_sum_min = 1.0  # highest possible error on the scale from 0 to 1 is 1
 
     # train2_loader_iter = iter(train2_loader)
-    NUM_EPOCHS = 90
+    NUM_EPOCHS = 120
 
     print(f'NUM_EPOCHS={NUM_EPOCHS}')
     n_iter = 0

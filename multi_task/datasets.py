@@ -82,7 +82,7 @@ def get_test_dataset(params, configs):
                            img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']),
                            augmentations=None)
 
-        test_loader = torch.utils.data.DataLoader(test_dst, batch_size=params['batch_size'] * 4,
+        test_loader = torch.utils.data.DataLoader(test_dst, batch_size=78,#params['batch_size'] * 4,
                                                   num_workers=8,
                                                  shuffle=False)
 

@@ -27,6 +27,11 @@ celeba_dict = {0: '5_o_Clock_Shadow', 1: 'Arched_Eyebrows', 2: 'Attractive', 3: 
                31: 'Smiling', 32: 'Straight_Hair', 33: 'Wavy_Hair', 34: 'Wearing_Earrings', 35: 'Wearing_Hat',
                36: 'Wearing_Lipstick', 37: 'Wearing_Necklace', 38: 'Wearing_Necktie', 39: 'Young'}
 
+def task_ind_from_task_name(task_name):
+    for idx, task in celeba_dict.items():
+        if task == task_name:
+            return idx
+
 layers = ['layer1_0',
           'layer1_1_conv1', 'layer1_1',
           'layer2_0_conv1', 'layer2_0',
@@ -144,7 +149,8 @@ def identity(img):
 
 
 def blur(img):
-    img = gaussian(img, sigma=0.4, multichannel=True,
+    img = gaussian(img, sigma=2.0#0.4
+                   , multichannel=True,
                    mode='reflect', preserve_range=True)
     return img
 
@@ -207,7 +213,7 @@ def save_image_batch(im_batch, path):
     plt.tight_layout()
 
     for i in range(len(im_batch)):
-        row = 0 if i < cols_num else 1
+        row = i // cols_num
         column = i - row * cols_num
         ax[row, column].imshow(im_batch[i])
         ax[row, column].get_xaxis().set_visible(False)
@@ -233,7 +239,8 @@ def save_image(im, path):
 
 def normalize_grad(grad):
     n = torch.norm(grad, 2, dim=(-1, -2, -3), keepdim=True)
-    res = grad / n
+    eps = 1e-8
+    res = grad / (n + eps)
     # std = [0.229, 0.224, 0.225] * 4
     # for channel in range(3):
     #     res[:, channel, :, :] *= std[channel]

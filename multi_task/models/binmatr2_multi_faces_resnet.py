@@ -770,6 +770,9 @@ class BinMatrResNet(nn.Module):
             else:
                 cur_connectivity = kronecker(binarized_connectivity[i][:, None], chunks_to_filters_for_kronecker)
             out_cur = (out * cur_connectivity).squeeze(-1)
+            # if i in [0,2,5,15,28]:
+            #     print("AAAAAAAAAAAAAAAAAAAAAAAAA, DOING SOMETHING REALLY STUPID")
+            #     out_cur[:, 148] = 0.8824
             if (self.replace_constants_last_layer_mode == 'store') or (self.replace_constants_last_layer_mode == 'restore'):
                 out_cur += self.last_layer_additives[i].unsqueeze(0).repeat(out_cur.size(0), 1)
             outs.append(out_cur)

@@ -6,7 +6,12 @@ if_true_cond_prob = False
 if if_true_cond_prob:
     df = pd.read_csv('list_attr_celeba.txt', sep='\s+', skiprows=1)
 else:
-    df = pd.read_csv('predicted_labels_celeba.csv', sep='\s+') #14_53
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_50_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_June_29/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_22_model.pkl'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_23_on_July_01/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_10_model.pkl'
+    model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
+    df = pd.read_csv(f'predicted_labels_celeba_{model_name_short}.csv', sep='\s+') #14_53
 # print(dict(zip(range(40), df.columns.values)))
 
 #conditional probability P(attr2|attr1)
@@ -40,9 +45,9 @@ ax.set_xticklabels(df.columns.values, rotation=90)
 cb = plt.colorbar(fraction=0.03, pad=0.01)
 cb.ax.tick_params(labelsize=6)
 if if_true_cond_prob:
-    path = f'celeba_cond_prob.svg'
+    path = f'cond_prob/celeba_cond_prob.svg'
 else:
-    path = f'celeba_cond_prob_modelA.svg'
+    path = f'cond_prob/celeba_cond_prob_{model_name_short}.svg'
 plt.savefig(path, format='svg', bbox_inches='tight', pad_inches=0, dpi=200)
 
 plt.show()

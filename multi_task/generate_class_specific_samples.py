@@ -4,16 +4,24 @@ Based on:
 (2) https://github.com/tensorflow/lucid
 (3) https://github.com/greentfrapp/lucent
 """
+import time
 from collections import OrderedDict
 
 from pathlib import Path
 from torch.nn.functional import softmax
-from torch.optim import SGD, Adam, RMSprop
+from torch.optim import SGD, Adam
 from torchvision import models
 
-from multi_task.load_model import load_trained_model
+# from multi_task.load_model import load_trained_model
+from load_model import load_trained_model
+from loaders.celeba_loader import CELEBA
 
-from multi_task.util.util import *
+# from multi_task.util.util import *
+import torch
+import numpy as np
+from util.util import *
+import skimage
+import imageio
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -29,10 +37,8 @@ def rfft2d_freqs(h, w):
     return np.sqrt(fx * fx + fy * fy)
 
 class ClassSpecificImageGenerator():
-    """
-        Produces an image that maximizes a certain class with gradient ascent
-    """
-    def __init__(self, model, target, im_size, batch_size=1, use_my_model=True):
+    def __init__(self, model, target, im_size, batch_size=1, use_my_model=True, hook_dict=None,
+                 diversity_layer_name=None, force_rep_indices=[]):
         self.target_layer_name, self.neuron_idx = target
 
         self.model = model
@@ -44,13 +50,27 @@ class ClassSpecificImageGenerator():
         self.batch_size = batch_size
         self.execute_trunk = lambda img: self.feature_extractor(img)
 
+
+        rep_dict_loaded = np.load('representatives.npy', allow_pickle=True).item()
+        used_neurons = np.load('actually_good_nodes.npy', allow_pickle=True).item()
+        rep_dict = {}
+        for rep_layer_idx in force_rep_indices:
+            rep_layer_name = layers[rep_layer_idx].replace('_', '.')
+            rep_used_neurons = np.array([int(x[x.find('_') + 1:]) for x in used_neurons[rep_layer_idx]])
+            # rep = rep_dict_loaded[rep_layer_name].reshape((rep_dict_loaded[rep_layer_name].shape[0], -1))
+            rep = rep_dict_loaded[rep_layer_name].mean(axis=(-1, -2))
+            rep = torch.tensor(rep).to(device)
+            rep_dict[rep_layer_name] = rep
+            self.n_reps = rep_dict_loaded[rep_layer_name].shape[0] # is the same everywhere
+
         if self.use_my_model:
+            self.hook_dict = hook_dict
             self.feature_extractor = self.model['rep']
-            self.hook_dict = ClassSpecificImageGenerator.hook_model(self.model['rep'])
             self.feature_extractor.eval()
             for param in self.feature_extractor.parameters():
                 param.requires_grad_(False)
 
+            self.get_probs = None
             if self.target_layer_name == 'label':
                 target_class = self.neuron_idx
                 self.classifier = self.model[str(target_class)]
@@ -67,38 +87,107 @@ class ClassSpecificImageGenerator():
                 for c in self.irrelevant_classifiers.values():
                     c.eval()
 
-                self.get_target_tensor = lambda img, trunk_features: self.classifier.linear(trunk_features[target_class])[:, 1].mean()
+                if False:
+                    multipliers = torch.zeros((512)).to(device)
+                    multipliers[[235, 316, 490, 172, 164, 342, 28]] = 0.5 * torch.tensor(
+                        [2.5833, 7.0048, 3.4474, 3.2662, 5.7719, 2.6060, 1.0000]).to(device)
+                    self.get_target_tensor = lambda img, trunk_features: self.classifier.linear(
+                        multipliers * torch.tanh(trunk_features[target_class] / 10))[:, 1].mean()
+                else:
+                    self.get_target_tensor = lambda img, trunk_features: self.classifier.linear(
+                        trunk_features[target_class])[:, 1].mean()
+                    self.get_probs = lambda img, trunk_features: torch.nn.functional.softmax(
+                            self.classifier.linear(trunk_features[target_class]), dim=1)[:, 1].mean().item()
             else:
-                self.get_target_tensor = lambda img, _: self.hook_dict[self.target_layer_name].features[:, self.neuron_idx].mean()
+                self.get_target_tensor = lambda img, _: self.hook_dict[self.target_layer_name].features[:,
+                                                        self.neuron_idx].mean()
+                self.get_probs = None
 
         else:
             model.eval()
             self.get_target_tensor = lambda _, trunk_features: trunk_features[0, self.neuron_idx]
 
-        def inner_calculate_loss_f(self, image_transformed, trunk_features):
+        def inner_calculate_loss_f(self, image_transformed, trunk_features, n_step):
             output = self.get_target_tensor(image_transformed, trunk_features)
-            target_weight = 1
+            target_weight = 2
             class_loss = -output * target_weight \
-                         + 0.0005 ** 2 * torch.norm(self.image_transformed, 1) \
-                         + 0.001 ** 1.5 * total_variation_loss(self.image_transformed, 2)
+                         + 0.0001 * 0.001 ** 1.5 * total_variation_loss(self.image_transformed, 2) \
+                         + 0.0005 ** 3 * torch.norm(self.image_transformed, 1)
+
+            if n_step % 60 == 0:
+                print('Prob = ', self.get_probs(image_transformed, trunk_features))
+
+            if diversity_layer_name is not None:
+                tensor = self.hook_dict[diversity_layer_name].features
+                batch, channels, _, _ = tensor.shape
+                flattened = tensor.view(batch, channels, -1)
+                grams = torch.matmul(flattened, torch.transpose(flattened, 1, 2))
+                grams = torch.nn.functional.normalize(grams, p=2, dim=(1, 2))
+                if True:
+                    diversity_loss = sum([sum([(grams[i] * grams[j]).sum()
+                                               for j in range(batch) if j != i])
+                                          for i in range(batch)]) / batch
+                else:
+                    diversity_loss = 0.
+                    for i in range(batch):
+                        for j in range(batch):
+                            if j != i:
+                                cur = (grams[i] * grams[j]).sum()
+                                if cur > 1.0:
+                                    cur = cur ** 6
+                                diversity_loss += cur
+
+                    class_loss *= 0
+                class_loss += diversity_loss
+
+            n_step_start_force_rep = 180
+            if (len(force_rep_indices) > 0) and (n_step >= n_step_start_force_rep):
+                if n_step == n_step_start_force_rep:  # this 'if' is run exactly once
+                    self.target_rep_indices = np.ones((self.batch_size, 15), dtype=int) * -17
+                for layer_rep_idx in force_rep_indices:
+                    if layer_rep_idx == 2:
+                        #TODO: for some reason, in 2nd layer the spatial dims are 64x64 in current activations, and 32x32 in rep
+                        # in all the other layers spatial dims are the same between current activations and rep
+                        continue
+                    rep_used_neurons = np.array([int(x[x.find('_') + 1:]) for x in used_neurons[layer_rep_idx]])
+                    rep_layer_name = layers[layer_rep_idx]
+                    tensor = self.hook_dict[rep_layer_name].features[:, rep_used_neurons]
+                    # flattened = tensor.view(self.batch_size, -1)
+                    flattened = tensor.mean(axis=(-1, -2))
+                    total = 0.
+                    if n_step == n_step_start_force_rep:#this 'if' is run exactly once
+                        with torch.no_grad():
+                            for b in range(self.batch_size):
+                                max_val = -1.0
+                                for r in range(self.n_reps):
+                                    cur_rep = rep_dict[rep_layer_name.replace('_', '.')][r]
+                                    cur_flattened = flattened[b]
+                                    cosine_sim = cur_flattened.dot(cur_rep) / (torch.norm(cur_flattened, p=2) * torch.norm(cur_rep, p=2))
+                                    if cosine_sim > max_val:
+                                        self.target_rep_indices[b, layer_rep_idx] = r
+                        #             print(cosine_sim.item())
+                        # print()
+
+                    for i in range(self.batch_size):
+                        target_rep_idx = self.target_rep_indices[i, layer_rep_idx]
+                        rep = rep_dict[rep_layer_name.replace('_', '.')][target_rep_idx]
+                        # dot = flattened[i].dot(rep)
+                        cosine_sim = flattened[i].dot(rep) / (torch.norm(flattened[i], p=2) * torch.norm(rep, p=2))
+                        total += - (( (cosine_sim - 2) ** 2 ) ** (10/14. + layer_rep_idx * ( 4 / 196.))) #max(0.01, cosine_sim) ** 8
+                        if n_step % 60 == 0:
+                            print(cosine_sim.item())
+                    class_loss -= 0.5 * total#.mean()
             return class_loss
 
-        self.calculate_loss_f = lambda img, trunk_features: inner_calculate_loss_f(self, img, trunk_features)
-
-        # with open('configs.json') as config_params:
-        #     configs = json.load(config_params)
-        # test_dst = CELEBA(root=configs['celeba']['path'], is_transform=False, split='val',
-        #                   img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']),
-        #                   augmentations=None)
-        # self.created_image = test_dst.__getitem__(0)[0]
+        self.calculate_loss_f = lambda img, trunk_features, n_step: inner_calculate_loss_f(self, img, trunk_features, n_step)
 
         color_correlation_svd_sqrt = np.asarray([[0.26, 0.09, 0.02],
                                                  [0.27, 0.00, -0.05],
                                                  [0.27, -0.09, 0.03]]).astype("float32")
         if True:
             color_correlation_svd_sqrt = np.asarray([[0.22064119, 0.15331138, 0.10992278],
-                                                    [0.15331138, 0.19750742, 0.1486874 ],
-                                                    [0.10992278, 0.1486874 , 0.25062584]]).astype("float32")
+                                                     [0.15331138, 0.19750742, 0.1486874],
+                                                     [0.10992278, 0.1486874, 0.25062584]]).astype("float32")
             # color_correlation_svd_sqrt = np.asarray([[ 9.86012461, -7.94772474,  0.39051937],
             #                                        [-7.94772474, 15.5556668 , -5.74280639],
             #                                        [ 0.39051937, -5.74280639,  7.22573533]]).astype('float32')
@@ -106,24 +195,79 @@ class ClassSpecificImageGenerator():
             #                                          [0.1486874, 0.19750742, 0.15331138],
             #                                          [0.10992278, 0.15331138, 0.22064119]]).astype("float32")
         max_norm_svd_sqrt = np.max(np.linalg.norm(color_correlation_svd_sqrt, axis=0))
-        color_correlation_normalized = color_correlation_svd_sqrt / max_norm_svd_sqrt # multiply by more => brighter image
+        color_correlation_normalized = color_correlation_svd_sqrt / max_norm_svd_sqrt  # multiply by more => brighter image
+
+        # WARNING: the names of 2 funs below are legacy from confusing lucid stuff; they do opposite things, but not sure which is which
         def _linear_decorrelate_color(tensor):
             t_permute = tensor.permute(0, 2, 3, 1)
             t_permute = torch.matmul(t_permute, torch.tensor(color_correlation_normalized.T).to(device))
             tensor = t_permute.permute(0, 3, 1, 2)
             return tensor
 
-        self.fourier = True
-        if self.fourier:
-            h, w = self.size_0 *1, self.size_1 *1
+        def _linear_correlate_color(tensor):
+            t_permute = tensor.permute(0, 2, 3, 1)
+            t_permute = torch.matmul(t_permute, torch.tensor(np.linalg.inv(color_correlation_normalized.T)).to(device))
+            tensor = t_permute.permute(0, 3, 1, 2)
+            return tensor
+
+        self.if_fourier = True
+        if self.if_fourier:
+            h, w = self.size_0 * 4, self.size_1 * 4
             freqs = rfft2d_freqs(h, w)
             channels = 3
             init_val_size = (batch_size, channels) + freqs.shape + (2,)  # 2 for imaginary and real components
-            sd = 0.5
-            decay_power = 0.6
+            sd = 0.01  # 0.1
+            decay_power = 1.0  # 0.6
 
-            spectrum_real_imag_t = (torch.randn(*init_val_size) * sd).to(device).requires_grad_(True)
-            # spectrum_real_imag_t = (torch.FloatTensor(*init_val_size).uniform_(-0.5, 0.5)).to(device).requires_grad_(True)
+            if_start_from_existing = False
+            if if_start_from_existing:
+                if_start_from_dataset = True
+                if if_start_from_dataset:
+                    with open('configs.json') as config_params:
+                        configs = json.load(config_params)
+                    test_dst = CELEBA(root=configs['celeba']['path'], is_transform=False, split='val',
+                                      img_size=(h, w), augmentations=None)
+                    # img = test_dst.__getitem__(0)[0]
+                    # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/171070.png') #broad-faced guy
+                    img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/180648.png') #blond smiling gal
+                    # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/170028.png') #black-haired dude & pink-shirt woman
+                    # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/174565.png') #brown-haired woman on orange background
+                    # img = img[-175:, 15:125, :]
+                else:
+                    img = imageio.imread('12_479.jpg')
+
+                img = img[:, :,::-1]
+                img = img.astype(np.float64)
+                img = skimage.transform.resize(img, (h, w), order=3)
+                img = img.astype(float) / 255.0
+                # img = blur(img)
+                # plt.imshow(img) ; plt.show()
+                # HWC -> CWH
+                img = img.transpose(2, 0, 1)
+                img = torch.from_numpy(img).float().to(device)
+                if self.use_my_model:
+                    means = torch.tensor([0.38302392, 0.42581415, 0.50640459]).to(device)
+                    std = torch.tensor([0.2903, 0.2909, 0.3114]).to(device)
+                else:
+                    means = np.array([0.485, 0.456, 0.406])
+                    std = np.array([0.229, 0.224, 0.225])
+
+                img = (img - means[None, ..., None, None]) / std[None, ..., None, None]
+
+                img = _linear_correlate_color(img)
+
+                img *= 8
+
+                img_fourier = torch.rfft(img, normalized=True, signal_ndim=2)
+                scale = 1.0 / np.maximum(freqs, 1.0 / max(w, h)) ** decay_power
+                scale = torch.tensor(scale).float()[None, None, ..., None].to(device)
+                img_fourier = img_fourier / scale
+                self.image = img_fourier
+                self.image.requires_grad_(True)
+            else:
+                spectrum_real_imag_t = (torch.randn(*init_val_size) * sd).to(device).requires_grad_(True)
+                self.image = spectrum_real_imag_t
+            print(self.image.shape)
 
             def inner(spectrum_real_imag_t):
                 nonlocal decay_power
@@ -131,7 +275,6 @@ class ClassSpecificImageGenerator():
                 scale = 1.0 / np.maximum(freqs, 1.0 / max(w, h)) ** decay_power
                 scale = torch.tensor(scale).float()[None, None, ..., None].to(device)
                 # decay_power *= 0.9998
-
 
                 scaled_spectrum_t = scale * spectrum_real_imag_t
                 image = torch.irfft(scaled_spectrum_t, 2, normalized=True, signal_sizes=(h, w))
@@ -142,27 +285,28 @@ class ClassSpecificImageGenerator():
                 return _linear_decorrelate_color(image)
                 # return image
 
-            self.image = spectrum_real_imag_t
             self.image_to_bgr = inner
         else:
-            intensity_offset = 0
+            intensity_offset = 100
             self.image = np.random.uniform(0 + intensity_offset, 255 - intensity_offset,
-                                           (batch_size, self.size_0, self.size_1, 3))
-            # self.image = np.random.normal(0, 0.1, (batch_size, self.size_0, self.size_1, 3)) * 256 + 128
+                                           (batch_size, self.size_0* 4, self.size_1* 4, 3))
+            # self.image = np.random.normal(0, 0.1, (batch_size, self.size_0 * 4, self.size_1 * 4, 3)) * 256 + 128
             if self.use_my_model:
                 # means = np.array([73.15835921, 82.90891754, 72.39239876])
                 means = np.array([0.38302392, 0.42581415, 0.50640459]) * 255
                 # means = np.array([0.50640459, 0.42581415, 0.38302392]) * 255
+                std = np.array([0.2903, 0.2909, 0.3114])
             else:
                 means = np.array([0.485, 0.456, 0.406]) * 255
             for i in range(3):
                 self.image[:, :, :, i] -= means[i]
+                self.image[:, :, :, i] /= std[i]
             self.image /= 255
             self.image = torch.from_numpy(self.image).float()
             self.image = self.image.permute(0, 3, 1, 2)
             self.image = self.image.to(device).requires_grad_(True)
             self.image_to_bgr = lambda x: _linear_decorrelate_color(x)
-            # self.image_to_rgb_fun = lambda x: x
+            # self.image_to_bgr = lambda x: x
 
         if os.path.exists('generated'):
             shutil.rmtree('generated', ignore_errors=True)
@@ -176,7 +320,7 @@ class ClassSpecificImageGenerator():
             means = np.array([0.485, 0.456, 0.406])
             std = np.array([0.229, 0.224, 0.225])
 
-        return (im_as_var-means[None, ...,None,None]) / std[None, ...,None,None]
+        return (im_as_var - means[None, ..., None, None]) / std[None, ..., None, None]
 
     def recreate_image2_batch(self, img):
         img = self.image_to_bgr(img)
@@ -192,7 +336,6 @@ class ClassSpecificImageGenerator():
             else:
                 means = np.array([0.485, 0.456, 0.406]) * 255
                 std = [0.229, 0.224, 0.225]
-
 
             # CHW -> HWC
             recreated_im = recreated_im.transpose((1, 2, 0))
@@ -232,10 +375,11 @@ class ClassSpecificImageGenerator():
             self.features = None
 
         def hook_fn(self, module, input, output):
-            #TODO: DANGER! because output is not copied, if it's modified further in the forward pass, the values here will also be modified
-            #(this happens with "+= shortcut")
+            # TODO: DANGER! because output is not copied, if it's modified further in the forward pass, the values here will also be modified
+            # (this happens with "+= shortcut")
             self.module = module
             self.features = output
+            # return output.clamp(-10, 10)
 
         def close(self):
             self.hook.remove()
@@ -262,14 +406,14 @@ class ClassSpecificImageGenerator():
         return features
 
     def generate(self, n_steps, if_save_intermediate=True):
-        coeff_due_to_small_input = 0.35
+        coeff_due_to_small_input = 0.35 * 2
         # coeff_due_to_small_input /= coeff_due_to_small_input #comment this line when input is small
-        initial_learning_rate = 0.01 * coeff_due_to_small_input  #0.03  # 0.05 is good for imagenet, but not for celeba
+        initial_learning_rate = 0.01 * coeff_due_to_small_input  # 0.03  # 0.05 is good for imagenet, but not for celeba
         # too high lr => checkerboard patterns & acid colors, too low lr => uniform grayness
         saved_iteration_probs = {}
         self.recreate_and_save(self.image, 'generated/init.jpg')
         self.image.register_hook(normalize_grad)
-        optimizer = Adam([self.image], lr=initial_learning_rate)
+        optimizer = Adam([self.image], lr=initial_learning_rate, eps=1e-5)
         # torch.autograd.set_detect_anomaly(True)
         for i in range(n_steps + 1):
             # if (i + 1) % 30 == 0:
@@ -291,12 +435,12 @@ class ClassSpecificImageGenerator():
             # temp = self.processed_image.clone().cpu().detach().numpy()[0, :, :, :]
             # temp = temp.permute((1, 2, 0))
 
-            pixels_to_pad = 12 * 2
-            pixels_to_jitter1 = 8 * 2
-            pixels_to_jitter2 = 4 * 2
+            pixels_to_pad = 12  # * 2
+            pixels_to_jitter1 = 8  # * 2
+            pixels_to_jitter2 = 4  # * 2
             img_width = self.size_0
             img_height = self.size_1
-            ROTATE = 10
+            ROTATE = 5  # 10
             SCALE = 1.1
 
             # pad is 'reflect' because that's what's in colab
@@ -304,47 +448,28 @@ class ClassSpecificImageGenerator():
                 self.image_to_bgr,
                 # lambda img: torch.sigmoid(img),
                 # self.normalize,
-                lambda img: nn.functional.pad(img, [pixels_to_pad] * 4,'constant', 0.0),
+                lambda img: nn.functional.pad(img, [pixels_to_pad] * 4, 'constant', 0.5),
                 # lambda img: random_crop(img, img_width, img_height),
                 lambda img: jitter_lucid(img, pixels_to_jitter1),
                 # random_scale([1] * 10 + [1.005, 0.995]),
-                random_scale([1 + i / 25. for i in range(-5, 6)] + 5 * [1]),  # [SCALE ** (n/10.) for n in range(-10, 11)]),
+                random_scale([1 + i / 25. for i in range(-5, 6)] + 5 * [1]),
+                # [SCALE ** (n/10.) for n in range(-10, 11)]),
                 # random_rotate([-45]),
                 random_rotate(list(range(-ROTATE, ROTATE + 1)) + 5 * [0]),  # range(-ROTATE, ROTATE+1)),#,
                 # blur if i % 4 == 0 else identity,
                 lambda img: jitter_lucid(img, pixels_to_jitter2),
-                lambda img: torch.nn.functional.interpolate(img, (self.size_0, self.size_1), mode='bicubic', align_corners=False),
-                lambda img: center_crop(img, img_width, img_height),
-                lambda img: pad_to_correct_shape(img, img_width, img_height)
+                lambda img: torch.nn.functional.interpolate(img, (self.size_0, self.size_1), mode='bicubic',
+                                                            align_corners=False),
+                # lambda img: center_crop(img, img_width, img_height),
+                # lambda img: pad_to_correct_shape(img, img_width, img_height)
             ])
             # self.processed_image_transformed.data.clamp_(-1, 1)
-            # self.image_transformed = torch.tanh(self.image_transformed)
-
-            # if self.use_my_model:
-            #     if False:
-            #         features = self.feature_extractor(self.image_transformed, None)[0]
-            #         output = features[self.target_class]
-            #     else:
-            #         features = self.feature_extractor(self.image_transformed)
-            #         output = features[self.target_class]
-            #     output = self.classifier.linear(output)#[0]
-            #     # output = self.classifier(output, None)[0]
-            #     softmax_prob = torch.nn.functional.softmax(output, dim=1)[:, 1].mean().item()
-            #     # print(output)
-            #     output = output[:, 1].mean() #- output[:, 0].mean()
-            #     bad_softmaxes_sum = 0.
-            #     bad_output = 0.
-            #     for idx, icl in self.irrelevant_classifiers.items():
-            #         bad_output_cur = self.classifier(features[idx], None)[0]
-            #         bad_softmax_prob_cur = torch.nn.functional.softmax(bad_output_cur, dim=1)[:, 1].mean().item()
-            #         bad_softmaxes_sum += bad_softmax_prob_cur
-            #         bad_output += bad_output_cur[:, 1].mean()
-            #     bad_softmaxes_sum /= 38. # 40 in total - current - blurry
-            # else:
-            #     output = self.model(self.image_transformed)[0, self.target_class]
+            self.image_transformed = torch.tanh(self.image_transformed)
 
             features = self.execute_trunk(self.image_transformed)
-            class_loss = self.calculate_loss_f(self.image_transformed, features)
+            # for f in features:
+            #     f.clamp_(-3, 3)
+            class_loss = self.calculate_loss_f(self.image_transformed, features, i)
 
             # to_print = f"Iteration {i}:\t Loss {class_loss.item():.4f} \t" \
             #            f"{softmax_prob if self.use_my_model else '':.4f} {bad_softmaxes_sum if self.use_my_model else '':.2f}".expandtabs(20)
@@ -355,6 +480,7 @@ class ClassSpecificImageGenerator():
             if i % 60 == 0:  # or i < 5:
                 to_print = f"Iteration {i}:\t Loss {class_loss.item():.4f} \t".expandtabs(20)
                 print(to_print)
+
                 if if_save_intermediate or i == n_steps:
                     path = 'generated/c_specific_iteration_' + str(i) + '.jpg'
                     self.recreate_and_save(self.image, path)
@@ -407,6 +533,10 @@ if __name__ == '__main__':
         # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_rescaled.json'
         save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
         param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled2.json'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_25_on_June_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_31_model.pkl'
+        # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_rescaled3_bigimg.json'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/19_15_on_June_28/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
+        # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_nocomeback_rescaled2.json'
 
         trained_model = load_trained_model(param_file, save_model_path)
 
@@ -427,6 +557,9 @@ if __name__ == '__main__':
             else:
                 im_size = (64, 64)
 
+        hook_dict = ClassSpecificImageGenerator.hook_model(trained_model['rep'])
+
+
     else:
         target_class = 130  # Flamingo
         pretrained_model = models.alexnet(pretrained=True).to(device)
@@ -436,32 +569,40 @@ if __name__ == '__main__':
         used_neurons = np.load('actually_good_nodes.npy', allow_pickle=True).item()
 
     batch_size = 1
-    n_steps = 1200
+    n_steps = 2400
     if use_my_model:
         model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
-        for j, layer_name in list(enumerate(layers)) + [(None, 'label')]:
+        for j, layer_name in [(None, 'label')]: # [(None, layers[10])]: # list(enumerate(layers)) + [(None, 'label')]:#
             if layer_name != 'label':
-                cur_neurons = used_neurons[j]
-                cur_neurons = [int(x[x.find('_') + 1:]) for x in cur_neurons]
+                if False:
+                    cur_neurons = used_neurons[j]
+                    cur_neurons = [int(x[x.find('_') + 1:]) for x in cur_neurons]
+                else:
+                    cur_neurons = [17]
+                diversity_layer_name = layer_name
             else:
-                cur_neurons = range(40)
+                cur_neurons = [1]  # range(40)#[task_ind_from_task_name('Chubby')]#
+                diversity_layer_name = layers[-1]
             for i in cur_neurons:
                 print('Current: ', layer_name, i)
                 # layer_name = 'layer3_1_conv1'#'layer1_1'#'layer1_1_conv1'#'label'#'layer1_0' #
-                csig = ClassSpecificImageGenerator(trained_model, (layer_name, i), im_size, batch_size, True)
-                generated = csig.generate(n_steps, False)
-
-                imshow_path = f"generated_imshow_{model_name_short}"
-                Path(imshow_path).mkdir(parents=True, exist_ok=True)
-                imshow_path = f"generated_imshow_{model_name_short}/{layer_name}"
-                Path(imshow_path).mkdir(parents=True, exist_ok=True)
-
-                separate_path = f"generated_separate_{model_name_short}"
-                Path(separate_path).mkdir(parents=True, exist_ok=True)
-                separate_path = f"generated_separate_{model_name_short}/{layer_name}"
-                Path(separate_path).mkdir(parents=True, exist_ok=True)
-
-                copyfile(f'generated/c_specific_iteration_{n_steps}.jpg', imshow_path + f'/{i}.jpg')
+                csig = ClassSpecificImageGenerator(trained_model, (layer_name, i), im_size, batch_size, True, hook_dict, None,list(range(14)))
+                                                   # ,diversity_layer_name)
+                generated = csig.generate(n_steps, True)
+                #
+                # imshow_path = f"big_diverse_generated_imshow_{model_name_short}"
+                # Path(imshow_path).mkdir(parents=True, exist_ok=True)
+                # imshow_path = f"big_diverse_generated_imshow_{model_name_short}/{layer_name}"
+                # Path(imshow_path).mkdir(parents=True, exist_ok=True)
+                #
+                # separate_path = f"big_diverse_generated_separate_{model_name_short}"
+                # Path(separate_path).mkdir(parents=True, exist_ok=True)
+                # separate_path = f"big_diverse_generated_separate_{model_name_short}/{layer_name}"
+                # Path(separate_path).mkdir(parents=True, exist_ok=True)
+                #
+                # copyfile(f'generated/c_specific_iteration_{n_steps}.jpg', imshow_path + f'/{i}.jpg')
+                if True:
+                    separate_path = 'generated_separate'
                 recreated = csig.recreate_image2_batch(generated)
                 for j in range(batch_size):
                     save_image(recreated[j], separate_path + f'/{i}_{j}.jpg')

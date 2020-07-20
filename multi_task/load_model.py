@@ -14,6 +14,10 @@ import pandas
 import numpy as np
 
 
+def disable_conn(state, ind, src, dest):
+    state['connectivities'][ind][dest, src] = 0
+
+
 def load_trained_model(param_file, save_model_path, if_restore_connectivities=True,
                        if_visuzalization_conns=False, if_replace_useless_conns_with_bias=False,
                        if_enable_bias=False, if_replace_useless_conns_with_additives=False,
@@ -58,6 +62,64 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
     # del model_rep_state['layer3.0.shortcut.0.weight']
     # model_rep_state['layer4.0.shortcut.0.ordinary_conv.weight'] = model_rep_state['layer4.0.shortcut.0.weight']
     # del model_rep_state['layer4.0.shortcut.0.weight']
+
+    # state['connectivities'][-4][215, 71] = 0.
+    # state['connectivities'][-4][215, 103] = 0.
+
+    # state['connectivities'][-3][15, 79] = 0.
+    # state['connectivities'][-3][15, 282] = 0.
+
+    # state['connectivities'][-2][481, 214] = 0.
+    # state['connectivities'][-2][481, 385] = 0.
+
+    # state['connectivities'][-1][31, 57] = 0.
+    # state['connectivities'][-1][31, 279] = 0. #responsible only for pale skin & smiling, but makes viz worse
+    # state['connectivities'][-1][31, 126] = 0. # responsible for blond hair, overpowers smile
+    # state['connectivities'][-1][31, 331] = 0. # responsible for something black, overpowers smile
+    # state['connectivities'][-1][31, 261] = 0.
+
+    # state['connectivities'][-2][148, 15] = 1.
+    # state['connectivities'][-1][:, 148] = 0.
+    # state['connectivities'][-1][12, 148] = 1.
+
+    if False:
+        print('Some connections are disabled')
+    #black hair:
+        disable_conn(state, 1, 27, 50)
+        disable_conn(state, 1, 35, 50)
+        # state['connectivities'][2][28, 16] = 0
+        disable_conn(state, 2, 35, 76)
+        # disable_conn(state, 3, 76, 96)
+        disable_conn(state, 3, 101, 96)
+        disable_conn(state, 3, 113, 96)
+        disable_conn(state, 6, 29, 160)
+        # disable_conn(state, 6, 96, 160)
+        # state['connectivities'][6][248, 124] = 0
+        # state['connectivities'][7][106, 248] = 0
+        # disable_conn(state, 9, 142, 188)
+        # if True:
+        #     state['connectivities'][9][188, 216] = 0
+        # else:
+        #     state['connectivities'][8][216, 149] = 0
+        #     state['connectivities'][8][216, 0] = 0
+        #     state['connectivities'][8][216, 203] = 0
+        #     state['connectivities'][8][216, 106] = 0
+        #     state['connectivities'][8][216, 31] = 0
+        #     state['connectivities'][8][216, 25] = 0
+        disable_conn(state, 10, 188, 104)
+        disable_conn(state, 10, 86, 104)
+        # disable_conn(state, 10, 160, 104)
+
+        state['connectivities'][14][8, :] = 0
+        # state['connectivities'][14][8, 383] = 1
+        # state['connectivities'][14][8, 172] = 1
+        state['connectivities'][14][8, 400] = 1
+    #brown hair:
+        # state['connectivities'][14][11, :] = 0
+        # state['connectivities'][14][11, 383] = 1
+    #blond hair:
+        # state['connectivities'][14][9, 356] = 0
+
     if hasattr(model['rep'], 'connectivities') and if_restore_connectivities:
         # print('ACHTUNG! Trying out restoring connectivities')
         for i, conn in enumerate(state['connectivities']):
@@ -121,9 +183,14 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
     # print(model['35'].linear.weight)
     # np.where(model['rep'].connectivities[-1][35, :].cpu().detach().numpy() > 0.5)[0]
     # np.where(np.abs(model['35'].linear.weight.cpu().detach().numpy()[0]) > 0.1)[0]
+
+    # model['12'].linear.weight[:, 148] = torch.tensor([-0.06, 0.05#-0.8863,  0.8848
+    #                                                   ]).cuda()
+    # model['12'].linear.bias.data = torch.tensor([ 0.0676, -0.0725]).cuda() # first number is no, second number is yes.
+        # I.e. if first is 1000 we get 0 predictions, and when second is -1000 we get 0 predictions
     return model
 
-def eval_trained_model(param_file, model, if_store_val_pred=False):
+def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_path=None):
     with open(param_file) as json_params:
         params = json.load(json_params)
 
@@ -146,6 +213,7 @@ def eval_trained_model(param_file, model, if_store_val_pred=False):
         _, val_loader, _ = datasets.get_dataset(params, configs)
         loader = val_loader
         preds = [[] for _ in range(40)]
+        model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
 
     tasks = params['tasks']
     all_tasks = configs[params['dataset']]['all_tasks']
@@ -204,7 +272,7 @@ def eval_trained_model(param_file, model, if_store_val_pred=False):
         preds[preds == 0] = -1
         print(preds.shape)
         df = pandas.DataFrame({name:preds[:, i] for i, name in enumerate(celeba_dict.values())})
-        df.to_csv('predicted_labels_celeba.csv', sep=' ')
+        df.to_csv(f'predicted_labels_celeba_{model_name_short}.csv', sep=' ')
     error_sum = 0
     for t in tasks:
         metric_results = metric[t].get_result()
@@ -315,6 +383,16 @@ if __name__ == '__main__':
     param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled2.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_43_on_June_24/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_rescaled3_bigimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_25_on_June_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_31_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_rescaled3_bigimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_22_on_June_26/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_nocomeback_rescaled2.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/19_15_on_June_28/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_nocomeback_rescaled2.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_June_29/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_22_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_nocomeback_rescaled2.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_23_on_July_01/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_10_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_comeback_rescaled2.json'
 
     # config_name = 'configs.json'
     # config_name = 'configs_big_img.json'
@@ -326,4 +404,4 @@ if __name__ == '__main__':
         # test_additives_net(param_file, save_model_path)
     else:
         model = load_trained_model(param_file, save_model_path, if_restore_connectivities=True)
-        eval_trained_model(param_file, model, True)
+        eval_trained_model(param_file, model, True, save_model_path)

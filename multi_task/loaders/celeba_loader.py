@@ -81,6 +81,7 @@ class CELEBA(data.Dataset):
         :param index:
         """
         img_path = self.files[self.split][index].rstrip()
+        # print(img_path)
         label = self.labels[self.split][index]
         img = imageio.imread(img_path)
 
@@ -91,6 +92,12 @@ class CELEBA(data.Dataset):
             img = self.transform_img(img)
 
         return [img] + label
+
+    def get_item_by_path(self, img_path):
+        img = imageio.imread(img_path)
+        if self.is_transform:
+            img = self.transform_img(img)
+        return img
 
     def transform_img(self, img):
         """transform
@@ -115,16 +122,19 @@ if __name__ == '__main__':
 
 
     local_path = "/mnt/raid/data/chebykin/celeba"
-    dst = CELEBA(local_path, is_transform=True, augmentations=None)
+    dst = CELEBA(local_path, is_transform=True, augmentations=None, img_size=(128, 128))
     bs = 1
     trainloader = data.DataLoader(dst, batch_size=bs, num_workers=0)
 
     for i, data in enumerate(trainloader):
+        labels = data[1:]
+        if labels[23].item() != 1:
+            continue
         imgs = data[0].numpy()[:, ::-1, :, :]
         imgs = np.transpose(imgs, [0,2,3,1])
 
         plt.imshow(imgs[0])
-        plt.title(data[5].numpy())
+        plt.title(labels[23].numpy())
         # f, axarr = plt.subplots(bs,4, squeeze=False)
         #
         # for j in range(bs):
