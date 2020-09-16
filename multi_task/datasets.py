@@ -43,16 +43,16 @@ def get_dataset(params, configs):
         # train2_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='train2',img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']), augmentations=None)
         val1_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='val', img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']), augmentations=None)
 
-        train_loader = torch.utils.data.DataLoader(train_dst, batch_size=params['batch_size'], shuffle=True, num_workers=8)
+        train_loader = torch.utils.data.DataLoader(train_dst, batch_size=params['batch_size'], shuffle=True, num_workers=8, pin_memory=False)
         # train2_loader = torch.utils.data.DataLoader(train2_dst, batch_size=params['batch_size'], shuffle=True,num_workers=4)
-        val_loader = torch.utils.data.DataLoader(val1_dst, batch_size=params['batch_size'] * 4, shuffle=False, num_workers=8)
+        val_loader = torch.utils.data.DataLoader(val1_dst, batch_size=params['batch_size'] * 4, shuffle=False, num_workers=8, pin_memory=False)
         # val2_loader = torch.utils.data.DataLoader(val2_dst, batch_size=params['batch_size'], num_workers=4,
         #                                           shuffle=True)
         return train_loader, val_loader, None#train2_loader
 
-    if 'cifar10' == params['dataset']:
-        train_dst = CIFAR10(root=configs['cifar10']['path'], split='train')
-        val_dst = CIFAR10(root=configs['cifar10']['path'], split='val')
+    if ('cifar10' == params['dataset']) or ('cifar10_singletask' == params['dataset']):
+        train_dst = CIFAR10(root=configs[params['dataset']]['path'], split='train')
+        val_dst = CIFAR10(root=configs[params['dataset']]['path'], split='val')
 
         train_loader = torch.utils.data.DataLoader(train_dst, batch_size=params['batch_size'], shuffle=True, num_workers=8)
         val_loader = torch.utils.data.DataLoader(val_dst, batch_size=params['batch_size'] * 4, shuffle=False, num_workers=8)
@@ -82,7 +82,7 @@ def get_test_dataset(params, configs):
                            img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']),
                            augmentations=None)
 
-        test_loader = torch.utils.data.DataLoader(test_dst, batch_size=78,#params['batch_size'] * 4,
+        test_loader = torch.utils.data.DataLoader(test_dst, batch_size=params['batch_size'] * 4,#78
                                                   num_workers=8,
                                                  shuffle=False)
 
@@ -93,3 +93,17 @@ def get_test_dataset(params, configs):
 
         test_loader = torch.utils.data.DataLoader(test_dst, batch_size=params['batch_size'] * 4, shuffle=False, num_workers=8)
         return test_loader
+
+
+def get_random_val_subset(params, configs):
+    if 'dataset' not in params:
+        print('ERROR: No dataset is specified')
+
+    if 'celeba' == params['dataset']:
+        dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='val_random',
+                           img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']))
+
+        loader = torch.utils.data.DataLoader(dst, batch_size=params['batch_size'] * 4,
+                                                  num_workers=1, shuffle=False)
+
+        return loader

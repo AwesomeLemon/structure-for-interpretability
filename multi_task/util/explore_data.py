@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
-if_true_cond_prob = False
+if_true_cond_prob = True
 if if_true_cond_prob:
     df = pd.read_csv('list_attr_celeba.txt', sep='\s+', skiprows=1)
 else:
@@ -13,7 +13,9 @@ else:
     model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
     df = pd.read_csv(f'predicted_labels_celeba_{model_name_short}.csv', sep='\s+') #14_53
 # print(dict(zip(range(40), df.columns.values)))
-
+df_binary = df == 1
+true_freq = df_binary.mean(axis=0)
+true_freq.to_csv('class_freqs.csv')
 #conditional probability P(attr2|attr1)
 cond_probs = np.ones((40, 40))
 for i1 in range(len(df.columns.values)):

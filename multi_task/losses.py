@@ -1,11 +1,18 @@
 import torch
-import torch.nn.functional as F 
+import torch.nn.functional as F
+import pandas as pd
+import numpy as np
 
-def nll(pred, gt, val=False):
-    if val:
-        return F.nll_loss(pred, gt, size_average=False)
-    else:
-        return F.nll_loss(pred, gt)
+def nll(pred, gt, weight=None):
+    l = F.nll_loss(pred, gt, weight=weight, reduction='mean' if weight is None else 'none')
+    if weight is not None:
+        l = l.mean()
+    return l
+
+def focal(pred, gt, val=False, weight=None, gamma=0.5):
+    log_prob = pred
+    prob = torch.exp(log_prob)
+    return F.nll_loss(torch.pow(1 - prob, gamma) * log_prob, gt, size_average=not val, weight=weight)
 
 def rmse(pred, gt, val=False):
     pass
@@ -82,17 +89,39 @@ def get_loss(params):
 
     if 'celeba' == params['dataset']:
         loss_fn = {}
+        if_weighted_ce = 'weighted_ce' in params #for backward compatibility: unweighted by default
+        if if_weighted_ce:
+            weighted_ce_type = params['weighted_ce']
+            if weighted_ce_type == 'unweighted':
+                if_weighted_ce = False
+            elif weighted_ce_type == 'switch_freqs':
+                freqs = pd.read_csv('class_freqs.csv', header=None) #freq of true
+                if False:
+                    weights = torch.exp(- torch.tensor(np.vstack((1 - np.array(freqs[1]), np.array(freqs[1])))).float().cuda())
+                    # weights = torch.tensor(np.vstack((np.array(freqs[1]), 1 - np.array(freqs[1])))).float().cuda()
+                else:
+                    freq_yes = np.array(freqs[1])
+                    freq_no = 1 - freq_yes
+                    weight_no = 0.5 / freq_no
+                    weight_yes = (0.5 / freq_no) * (freq_no / freq_yes)
+                    weights = torch.tensor(np.vstack((weight_no, weight_yes))).float().cuda()
+                print(weights)
+                print(weights[:, 4])
+        if_ce = 'loss' in params #for backward compatibility: CrossEntropy by default
+        if if_ce:
+            loss_name = params['loss']
+            if loss_name == 'cross-entropy':
+                loss_callable = nll
+            elif loss_name == 'focal':
+                loss_callable = focal
+        else:
+            loss_callable = nll
+
         for t in params['tasks']:
-            loss_fn[t] = nll
+            loss_fn[t] = lambda pred, gt: loss_callable(pred, gt, None if not if_weighted_ce else weights[:, int(t)])
         return loss_fn
 
-    if 'cifar10' == params['dataset']:
-        loss_fn = {}
-        for t in params['tasks']:
-            loss_fn[t] = nll
-        return loss_fn
-
-    if 'cifarfashionmnist' == params['dataset']:
+    if params['dataset'] in ['cifar10', 'cifar10_singletask', 'cifarfashionmnist']:
         loss_fn = {}
         for t in params['tasks']:
             loss_fn[t] = nll

@@ -5,9 +5,11 @@ Based on:
 (3) https://github.com/greentfrapp/lucent
 """
 import time
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 from pathlib import Path
+
+from torch import nn
 from torch.nn.functional import softmax
 from torch.optim import SGD, Adam
 from torchvision import models
@@ -22,6 +24,9 @@ import numpy as np
 from util.util import *
 import skimage
 import imageio
+from siren import SirenNet
+import torch.nn.functional as F
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -38,7 +43,7 @@ def rfft2d_freqs(h, w):
 
 class ClassSpecificImageGenerator():
     def __init__(self, model, target, im_size, batch_size=1, use_my_model=True, hook_dict=None,
-                 diversity_layer_name=None, force_rep_indices=[]):
+                 diversity_layer_name=None, force_rep_indices=[], if_cppn=False):
         self.target_layer_name, self.neuron_idx = target
 
         self.model = model
@@ -51,14 +56,15 @@ class ClassSpecificImageGenerator():
         self.execute_trunk = lambda img: self.feature_extractor(img)
 
 
-        rep_dict_loaded = np.load('representatives.npy', allow_pickle=True).item()
+        rep_dict_loaded = np.load('representatives_kmeans14_50_alllayers.npy', allow_pickle=True).item()
+        # rep_dict_loaded = np.load('representatives_kmeans14_50.npy', allow_pickle=True).item()
         used_neurons = np.load('actually_good_nodes.npy', allow_pickle=True).item()
         rep_dict = {}
         for rep_layer_idx in force_rep_indices:
             rep_layer_name = layers[rep_layer_idx].replace('_', '.')
             rep_used_neurons = np.array([int(x[x.find('_') + 1:]) for x in used_neurons[rep_layer_idx]])
             # rep = rep_dict_loaded[rep_layer_name].reshape((rep_dict_loaded[rep_layer_name].shape[0], -1))
-            rep = rep_dict_loaded[rep_layer_name].mean(axis=(-1, -2))
+            rep = rep_dict_loaded[rep_layer_name][:, rep_used_neurons, :, :].mean(axis=(-1, -2))
             rep = torch.tensor(rep).to(device)
             rep_dict[rep_layer_name] = rep
             self.n_reps = rep_dict_loaded[rep_layer_name].shape[0] # is the same everywhere
@@ -94,14 +100,18 @@ class ClassSpecificImageGenerator():
                     self.get_target_tensor = lambda img, trunk_features: self.classifier.linear(
                         multipliers * torch.tanh(trunk_features[target_class] / 10))[:, 1].mean()
                 else:
-                    self.get_target_tensor = lambda img, trunk_features: self.classifier.linear(
-                        trunk_features[target_class])[:, 1].mean()
+                    if False:
+                        self.get_target_tensor = lambda img, trunk_features: self.classifier.linear(
+                            100 * torch.tanh(trunk_features[target_class] / 10))[:, 1].mean()
+                    else:
+                        self.get_target_tensor = lambda img, trunk_features: self.classifier.linear(
+                            trunk_features[target_class])[:, 1].mean()
                     self.get_probs = lambda img, trunk_features: torch.nn.functional.softmax(
                             self.classifier.linear(trunk_features[target_class]), dim=1)[:, 1].mean().item()
             else:
                 self.get_target_tensor = lambda img, _: self.hook_dict[self.target_layer_name].features[:,
                                                         self.neuron_idx].mean()
-                self.get_probs = None
+                self.get_probs = lambda x, y: None
 
         else:
             model.eval()
@@ -111,8 +121,9 @@ class ClassSpecificImageGenerator():
             output = self.get_target_tensor(image_transformed, trunk_features)
             target_weight = 2
             class_loss = -output * target_weight \
-                         + 0.0001 * 0.001 ** 1.5 * total_variation_loss(self.image_transformed, 2) \
-                         + 0.0005 ** 3 * torch.norm(self.image_transformed, 1)
+                         + 0.0005 ** 3 * torch.norm(self.image_transformed, 1)\
+                         + 0.0001 * 0.001 ** 1.5 * total_variation_loss(self.image_transformed, 2)\
+                        # - 10* punish_outside_center(self.image_transformed)
 
             if n_step % 60 == 0:
                 print('Prob = ', self.get_probs(image_transformed, trunk_features))
@@ -158,13 +169,17 @@ class ClassSpecificImageGenerator():
                     if n_step == n_step_start_force_rep:#this 'if' is run exactly once
                         with torch.no_grad():
                             for b in range(self.batch_size):
-                                max_val = -1.0
-                                for r in range(self.n_reps):
-                                    cur_rep = rep_dict[rep_layer_name.replace('_', '.')][r]
-                                    cur_flattened = flattened[b]
-                                    cosine_sim = cur_flattened.dot(cur_rep) / (torch.norm(cur_flattened, p=2) * torch.norm(cur_rep, p=2))
-                                    if cosine_sim > max_val:
-                                        self.target_rep_indices[b, layer_rep_idx] = r
+                                if True:
+                                    max_val = -1.0
+                                    for r in range(self.n_reps):
+                                        cur_rep = rep_dict[rep_layer_name.replace('_', '.')][r]
+                                        cur_flattened = flattened[b]
+                                        cosine_sim = cur_flattened.dot(cur_rep) / (torch.norm(cur_flattened, p=2) * torch.norm(cur_rep, p=2))
+                                        if cosine_sim > max_val:
+                                            self.target_rep_indices[b, layer_rep_idx] = r
+                                else:
+                                    #for getting activations of lower layers, given a k-means centroid for the last layer
+                                    self.target_rep_indices[b, layer_rep_idx] = b
                         #             print(cosine_sim.item())
                         # print()
 
@@ -176,7 +191,7 @@ class ClassSpecificImageGenerator():
                         total += - (( (cosine_sim - 2) ** 2 ) ** (10/14. + layer_rep_idx * ( 4 / 196.))) #max(0.01, cosine_sim) ** 8
                         if n_step % 60 == 0:
                             print(cosine_sim.item())
-                    class_loss -= 0.5 * total#.mean()
+                    class_loss -= 0.1 * total#.mean()
             return class_loss
 
         self.calculate_loss_f = lambda img, trunk_features, n_step: inner_calculate_loss_f(self, img, trunk_features, n_step)
@@ -210,103 +225,221 @@ class ClassSpecificImageGenerator():
             tensor = t_permute.permute(0, 3, 1, 2)
             return tensor
 
-        self.if_fourier = True
-        if self.if_fourier:
-            h, w = self.size_0 * 4, self.size_1 * 4
-            freqs = rfft2d_freqs(h, w)
-            channels = 3
-            init_val_size = (batch_size, channels) + freqs.shape + (2,)  # 2 for imaginary and real components
-            sd = 0.01  # 0.1
-            decay_power = 1.0  # 0.6
+        if not if_cppn:
+            self.if_fourier = True
+            if self.if_fourier:
+                h, w = self.size_0 * 4, self.size_1 * 4
+                freqs = rfft2d_freqs(h, w)
+                channels = 3
+                init_val_size = (batch_size, channels) + freqs.shape + (2,)  # 2 for imaginary and real components
+                sd = 0.01  # 0.1
+                decay_power = 1.0  # 0.6
 
-            if_start_from_existing = False
-            if if_start_from_existing:
-                if_start_from_dataset = True
-                if if_start_from_dataset:
-                    with open('configs.json') as config_params:
-                        configs = json.load(config_params)
-                    test_dst = CELEBA(root=configs['celeba']['path'], is_transform=False, split='val',
-                                      img_size=(h, w), augmentations=None)
-                    # img = test_dst.__getitem__(0)[0]
-                    # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/171070.png') #broad-faced guy
-                    img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/180648.png') #blond smiling gal
-                    # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/170028.png') #black-haired dude & pink-shirt woman
-                    # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/174565.png') #brown-haired woman on orange background
-                    # img = img[-175:, 15:125, :]
+                if_start_from_existing = False
+                if if_start_from_existing:
+                    if_start_from_dataset = False
+                    if if_start_from_dataset:
+                        with open('configs.json') as config_params:
+                            configs = json.load(config_params)
+                        test_dst = CELEBA(root=configs['celeba']['path'], is_transform=False, split='val',
+                                          img_size=(h, w), augmentations=None)
+                        # img = test_dst.__getitem__(0)[0]
+                        # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/171070.png') #broad-faced guy
+                        img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/180648.png') #blond smiling gal
+                        # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/170028.png') #black-haired dude & pink-shirt woman
+                        # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/174565.png') #brown-haired woman on orange background
+                        # img = img[-175:, 15:125, :]
+                    else:
+                        # img = imageio.imread('12_479.jpg')
+                        # img = imageio.imread('7_57.jpg')
+                        img = imageio.imread('blond_hair_cppn.jpg')
+
+                    img = img[:, :,::-1]
+                    img = img.astype(np.float64)
+                    img = skimage.transform.resize(img, (h, w), order=3)
+                    img = img.astype(float) / 255.0
+                    # img = blur(img)
+                    # plt.imshow(img) ; plt.show()
+                    # HWC -> CWH
+                    img = img.transpose(2, 0, 1)
+                    img = torch.from_numpy(img).float().to(device)
+                    if self.use_my_model:
+                        means = torch.tensor([0.38302392, 0.42581415, 0.50640459]).to(device)
+                        std = torch.tensor([0.2903, 0.2909, 0.3114]).to(device)
+                    else:
+                        means = np.array([0.485, 0.456, 0.406])
+                        std = np.array([0.229, 0.224, 0.225])
+
+                    img = (img - means[None, ..., None, None]) / std[None, ..., None, None]
+
+                    img = _linear_correlate_color(img)
+
+                    img *= 8
+
+                    img_fourier = torch.rfft(img, normalized=True, signal_ndim=2)
+                    scale = 1.0 / np.maximum(freqs, 1.0 / max(w, h)) ** decay_power
+                    scale = torch.tensor(scale).float()[None, None, ..., None].to(device)
+                    img_fourier = img_fourier / scale
+                    self.image = img_fourier
+                    self.image.requires_grad_(True)
                 else:
-                    img = imageio.imread('12_479.jpg')
+                    spectrum_real_imag_t = (torch.randn(*init_val_size) * sd).to(device).requires_grad_(True)
+                    self.image = spectrum_real_imag_t
+                print(self.image.shape)
 
-                img = img[:, :,::-1]
-                img = img.astype(np.float64)
-                img = skimage.transform.resize(img, (h, w), order=3)
-                img = img.astype(float) / 255.0
-                # img = blur(img)
-                # plt.imshow(img) ; plt.show()
-                # HWC -> CWH
-                img = img.transpose(2, 0, 1)
-                img = torch.from_numpy(img).float().to(device)
+                def inner(spectrum_real_imag_t):
+                    nonlocal decay_power
+                    # 2 lines below used to be outside
+                    scale = 1.0 / np.maximum(freqs, 1.0 / max(w, h)) ** decay_power
+                    scale = torch.tensor(scale).float()[None, None, ..., None].to(device)
+                    # decay_power *= 0.9998
+
+                    scaled_spectrum_t = scale * spectrum_real_imag_t
+                    image = torch.irfft(scaled_spectrum_t, 2, normalized=True, signal_sizes=(h, w))
+                    image = image[:batch_size, :channels, :h, :w]
+                    # image += 1.0 # arbitrary additive from me for making image brighter. Works on init, but colors quickly decay from human to pale
+                    magic = 8.0  # Magic constant from Lucid library; increasing this seems to reduce saturation
+                    image = image / magic
+                    return _linear_decorrelate_color(image)
+                    # return image
+
+                self.image_to_bgr = inner
+            else:
+                intensity_offset = 100
+                self.image = np.random.uniform(0 + intensity_offset, 255 - intensity_offset,
+                                               (batch_size, self.size_0* 4, self.size_1* 4, 3))
+                # self.image = np.random.normal(0, 0.1, (batch_size, self.size_0 * 4, self.size_1 * 4, 3)) * 256 + 128
                 if self.use_my_model:
-                    means = torch.tensor([0.38302392, 0.42581415, 0.50640459]).to(device)
-                    std = torch.tensor([0.2903, 0.2909, 0.3114]).to(device)
+                    # means = np.array([73.15835921, 82.90891754, 72.39239876])
+                    means = np.array([0.38302392, 0.42581415, 0.50640459]) * 255
+                    # means = np.array([0.50640459, 0.42581415, 0.38302392]) * 255
+                    std = np.array([0.2903, 0.2909, 0.3114])
                 else:
-                    means = np.array([0.485, 0.456, 0.406])
-                    std = np.array([0.229, 0.224, 0.225])
-
-                img = (img - means[None, ..., None, None]) / std[None, ..., None, None]
-
-                img = _linear_correlate_color(img)
-
-                img *= 8
-
-                img_fourier = torch.rfft(img, normalized=True, signal_ndim=2)
-                scale = 1.0 / np.maximum(freqs, 1.0 / max(w, h)) ** decay_power
-                scale = torch.tensor(scale).float()[None, None, ..., None].to(device)
-                img_fourier = img_fourier / scale
-                self.image = img_fourier
-                self.image.requires_grad_(True)
-            else:
-                spectrum_real_imag_t = (torch.randn(*init_val_size) * sd).to(device).requires_grad_(True)
-                self.image = spectrum_real_imag_t
-            print(self.image.shape)
-
-            def inner(spectrum_real_imag_t):
-                nonlocal decay_power
-                # 2 lines below used to be outside
-                scale = 1.0 / np.maximum(freqs, 1.0 / max(w, h)) ** decay_power
-                scale = torch.tensor(scale).float()[None, None, ..., None].to(device)
-                # decay_power *= 0.9998
-
-                scaled_spectrum_t = scale * spectrum_real_imag_t
-                image = torch.irfft(scaled_spectrum_t, 2, normalized=True, signal_sizes=(h, w))
-                image = image[:batch_size, :channels, :h, :w]
-                # image += 1.0 # arbitrary additive from me for making image brighter. Works on init, but colors quickly decay from human to pale
-                magic = 8.0  # Magic constant from Lucid library; increasing this seems to reduce saturation
-                image = image / magic
-                return _linear_decorrelate_color(image)
-                # return image
-
-            self.image_to_bgr = inner
+                    means = np.array([0.485, 0.456, 0.406]) * 255
+                for i in range(3):
+                    self.image[:, :, :, i] -= means[i]
+                    self.image[:, :, :, i] /= std[i]
+                self.image /= 255
+                self.image = torch.from_numpy(self.image).float()
+                self.image = self.image.permute(0, 3, 1, 2)
+                self.image = self.image.to(device).requires_grad_(True)
+                self.image_to_bgr = lambda x: _linear_decorrelate_color(x)
+                # self.image_to_bgr = lambda x: x
         else:
-            intensity_offset = 100
-            self.image = np.random.uniform(0 + intensity_offset, 255 - intensity_offset,
-                                           (batch_size, self.size_0* 4, self.size_1* 4, 3))
-            # self.image = np.random.normal(0, 0.1, (batch_size, self.size_0 * 4, self.size_1 * 4, 3)) * 256 + 128
-            if self.use_my_model:
-                # means = np.array([73.15835921, 82.90891754, 72.39239876])
-                means = np.array([0.38302392, 0.42581415, 0.50640459]) * 255
-                # means = np.array([0.50640459, 0.42581415, 0.38302392]) * 255
-                std = np.array([0.2903, 0.2909, 0.3114])
+            r = 81 ** 0.5 #increasing this leads to smaller patterns & better loss (more negative)
+
+            coord_range = torch.linspace(-r, r, self.size_0 * 4)
+            x = coord_range.view(-1, 1).repeat(1, coord_range.size(0))
+            y = coord_range.view(1, -1).repeat(coord_range.size(0), 1)
+            input_tensor = torch.stack([x, y], dim=0).unsqueeze(0).to(device)
+
+            if True:
+                class CompositeActivation(torch.nn.Module):
+                    def forward(self, x):
+                        # x = torch.atan(x)
+                        # return torch.cat([x / 0.67, (x * x) / 0.6], 1)
+                        # x = torch.relu(x)
+                        # return (x - 0.40) / 0.58
+                        x = torch.sin(x)
+                        return x / 0.657
+
+                class DivideByConst(torch.nn.Module):
+                    def forward(self, x):
+                        return x / 2.
+
+                class ResBlock(torch.nn.Module):
+                    def __init__(self, in_planes, planes, act_fun):
+                        super(ResBlock, self).__init__()
+                        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, stride=1, padding=0,
+                                               bias=True)
+                        self.conv2 = nn.Conv2d(planes, planes, kernel_size=1, stride=1, padding=0, bias=True)
+                        self.shortcut = nn.Sequential()
+                        self.act_fun = act_fun
+                        if in_planes != planes:
+                            conv_to_use = nn.Conv2d(in_planes, planes, kernel_size=1, stride=1,
+                                                    bias=True)
+                            self.shortcut = nn.Sequential(conv_to_use)
+
+                    def forward(self, x):
+                        out = self.conv1(x)
+                        out = self.act_fun(out)
+                        out = self.conv2(out)
+                        out += self.shortcut(x)
+                        out = self.act_fun(out)
+                        return out
+
+                num_output_channels = 3
+                num_hidden_channels = 24
+                num_layers = 10
+                activation_fn = CompositeActivation
+                normalize = False
+
+                layers = []
+                kernel_size = 1
+                for i in range(num_layers):
+                    out_c = num_hidden_channels
+                    in_c = out_c #* 2  # * 2 for composite activation
+                    if i == 0:
+                        in_c = 2
+                    if i == num_layers - 1:
+                        out_c = num_output_channels
+                    if False:
+                        layers.append(('conv{}'.format(i), torch.nn.Conv2d(in_c, out_c, kernel_size)))
+                        if normalize:
+                            layers.append(('norm{}'.format(i), torch.nn.InstanceNorm2d(out_c)))
+                        if i < num_layers - 1:
+                            layers.append(('actv{}'.format(i), activation_fn()))
+                        else:
+                            # layers.append(('div', DivideByConst()))
+                            # layers.append(('output', torch.nn.Sigmoid()))
+                            layers.append(('output', torch.nn.Tanh()))
+                    else:
+                        if i < num_layers - 1:
+                            layers.append((f'resblock{i}', ResBlock(in_c, out_c, activation_fn())))
+                        else:
+                            layers.append(('conv{}'.format(i), torch.nn.Conv2d(in_c, out_c, kernel_size)))
+                            layers.append(('output', torch.nn.Tanh()))
+
+                # Initialize model
+                net = torch.nn.Sequential(OrderedDict(layers)).to(device)
+                print(net)
+                # Initialize weights
+                # def weights_init(module):
+                #     if isinstance(module, torch.nn.Conv2d):
+                #         if True:
+                #             torch.nn.init.normal_(module.weight, 0, np.sqrt(1 / module.in_channels))
+                #             if module.bias is not None:
+                #                 torch.nn.init.zeros_(module.bias)
+                #         else:
+                #             w_std = (1 / module.in_channels) #if self.is_first else (math.sqrt(c / module.in_channels))
+                #             torch.nn.init.uniform_(module.weight, -w_std, w_std)
+                #             if module.bias is not None:
+                #                 torch.nn.init.zeros_(module.bias)
+                # net.apply(weights_init)
+                # # Set last conv2d layer's weights to 0
+                # torch.nn.init.zeros_(dict(net.named_children())['conv{}'.format(num_layers - 1)].weight)
+                self.image = list(net.parameters())
+                self.image_to_bgr = lambda _: _linear_decorrelate_color(net(input_tensor))
             else:
-                means = np.array([0.485, 0.456, 0.406]) * 255
-            for i in range(3):
-                self.image[:, :, :, i] -= means[i]
-                self.image[:, :, :, i] /= std[i]
-            self.image /= 255
-            self.image = torch.from_numpy(self.image).float()
-            self.image = self.image.permute(0, 3, 1, 2)
-            self.image = self.image.to(device).requires_grad_(True)
-            self.image_to_bgr = lambda x: _linear_decorrelate_color(x)
-            # self.image_to_bgr = lambda x: x
+                net = SirenNet(
+                    dim_in=2,  # input dimension, ex. 2d coor
+                    dim_hidden=256,  # hidden dimension
+                    dim_out=3,  # output dimension, ex. rgb value
+                    num_layers=5,  # number of layers
+                    final_activation=nn.Identity(),  # activation of final layer (nn.Identity() for direct output)
+                    w0_initial=30.
+                    # different signals may require different omega_0 in the first layer - this is a hyperparameter
+                ).to(device)
+                self.image = list(net.parameters())
+                # print(input_tensor.shape)
+                input_tensor = input_tensor.reshape(1, 2, -1)
+                # print(input_tensor.shape)
+                input_tensor = input_tensor.permute(0, 2, 1)
+                # print(input_tensor.shape)
+                # print(net(input_tensor).shape)
+                # print(net(input_tensor).reshape(1, 256, 256, 3).permute(0, 3, 1, 2).shape)
+
+                self.image_to_bgr = lambda _: _linear_decorrelate_color(net(input_tensor).reshape(1, 256, 256, 3).permute(0, 3, 1, 2))
 
         if os.path.exists('generated'):
             shutil.rmtree('generated', ignore_errors=True)
@@ -408,20 +541,22 @@ class ClassSpecificImageGenerator():
     def generate(self, n_steps, if_save_intermediate=True):
         coeff_due_to_small_input = 0.35 * 2
         # coeff_due_to_small_input /= coeff_due_to_small_input #comment this line when input is small
-        initial_learning_rate = 0.01 * coeff_due_to_small_input  # 0.03  # 0.05 is good for imagenet, but not for celeba
+        initial_learning_rate = 0.4 * 2*0.5 * 0.01 * coeff_due_to_small_input  # 0.03  # 0.05 is good for imagenet, but not for celeba
         # too high lr => checkerboard patterns & acid colors, too low lr => uniform grayness
         saved_iteration_probs = {}
         self.recreate_and_save(self.image, 'generated/init.jpg')
-        self.image.register_hook(normalize_grad)
-        optimizer = Adam([self.image], lr=initial_learning_rate, eps=1e-5)
+        if True:
+            self.image.register_hook(normalize_grad)
+        optimizer = Adam([self.image] if not type(self.image) == list else self.image, lr=initial_learning_rate, eps=1e-5)
         # torch.autograd.set_detect_anomaly(True)
         for i in range(n_steps + 1):
-            # if (i + 1) % 30 == 0:
-            #     lr_multiplier = 0.9
+            # if (i + 1) % 420 ==
+            # 0:
+            #     lr_multiplier = 0.8
             #     for param_group in optimizer.param_groups:
             #         param_group['lr'] *= lr_multiplier
-            #     if target_weight > 1.1:
-            #         target_weight *= 0.95
+                # if target_weight > 1.1:
+                #     target_weight *= 0.95
             if self.use_my_model:
                 self.feature_extractor.zero_grad()
                 if self.target_layer_name == 'label':
@@ -440,7 +575,7 @@ class ClassSpecificImageGenerator():
             pixels_to_jitter2 = 4  # * 2
             img_width = self.size_0
             img_height = self.size_1
-            ROTATE = 5  # 10
+            ROTATE = 5
             SCALE = 1.1
 
             # pad is 'reflect' because that's what's in colab
@@ -465,6 +600,8 @@ class ClassSpecificImageGenerator():
             ])
             # self.processed_image_transformed.data.clamp_(-1, 1)
             self.image_transformed = torch.tanh(self.image_transformed)
+            # if True:
+            #     self.image_transformed.register_hook(normalize_grad)
 
             features = self.execute_trunk(self.image_transformed)
             # for f in features:
@@ -494,118 +631,155 @@ class ClassSpecificImageGenerator():
 if __name__ == '__main__':
     use_my_model = True
 
-    if use_my_model:
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_21_on_November_27/optimizer=Adam|batch_size=256|lr=0.0005|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3___0.025|__4___0._1_model.pkl'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_53_on_February_11/optimizer=Adam|batch_size=256|lr=0.005|lambda_reg=0.005|chunks=[4|_4|_4]|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025_42_model.pkl'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_37_on_February_19/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True_6_model.pkl'
-        # param_file = 'old_params/sample_all.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_47_on_February_12/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.005|chunks=[4|_4|_4]|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.02_10_model.pkl'
-        # param_file = 'params/bigger_reg_4_4_4.json'
+    for epoch in [7, 22, 52, 82, 112]:
+        if use_my_model:
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_21_on_November_27/optimizer=Adam|batch_size=256|lr=0.0005|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3___0.025|__4___0._1_model.pkl'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_53_on_February_11/optimizer=Adam|batch_size=256|lr=0.005|lambda_reg=0.005|chunks=[4|_4|_4]|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025_42_model.pkl'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_37_on_February_19/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True_6_model.pkl'
+            # param_file = 'old_params/sample_all.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_47_on_February_12/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.005|chunks=[4|_4|_4]|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.02_10_model.pkl'
+            # param_file = 'params/bigger_reg_4_4_4.json'
 
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_05_on_April_25/optimizer=SGD_Adam|batch_size=96|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|if__16_model.pkl'
-        # param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4_bigimg.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_06_on_April_26/optimizer=SGD_Adam|batch_size=52|lr=0.002|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|_27_model.pkl'
-        # param_file = 'params/binmatr2_16_16_4_sgdadam0002_pretrain_condecaytask1e-4_biggerimg.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_25_on_April_30/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|connectivities_l1_all=False|if__23_model.pkl'
-        # param_file = 'params/binmatr2_16_16_4_sgdadam0004_pretrain_fc_bigimg.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_22_on_June_04/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0_45_model.pkl'
-        # param_file = 'params/binmatr2_15_8s_sgdadam001+0005_pretrain_nocondecay_comeback.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_53_on_May_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_49_model.pkl'
-        # param_file = 'params/binmatr2_filterwise_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/07_52_on_June_04/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=1_40_model.pkl'
-        # param_file = 'params/binmatr2_15_8s_sgdadam001+0005_pretrain_condecayall1e-5_comeback.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_35_on_May_20/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1' \
-        #                   r'|weight_de_58_model.pkl'
-        # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_condecayall2e-6.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/02_16_on_May_23/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
-        # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc_consontop.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_46_on_June_08/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay_60_model.pkl'
-        # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_fc_bigimg.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_50_on_June_17/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
-        # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_fc_bigimg_consontop_condecayall1e-5.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_30_on_June_18/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
-        # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_fc_bigimg_consontop_condecayall3e-5.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_57_on_June_19/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
-        # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_bigimg.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_41_on_June_21/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
-        # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_bigimg.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_07_on_June_22/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
-        # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_rescaled.json'
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
-        param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled2.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_25_on_June_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_31_model.pkl'
-        # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_rescaled3_bigimg.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/19_15_on_June_28/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
-        # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_nocomeback_rescaled2.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_05_on_April_25/optimizer=SGD_Adam|batch_size=96|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|if__16_model.pkl'
+            # param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4_bigimg.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_06_on_April_26/optimizer=SGD_Adam|batch_size=52|lr=0.002|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|_27_model.pkl'
+            # param_file = 'params/binmatr2_16_16_4_sgdadam0002_pretrain_condecaytask1e-4_biggerimg.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_25_on_April_30/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|connectivities_l1_all=False|if__23_model.pkl'
+            # param_file = 'params/binmatr2_16_16_4_sgdadam0004_pretrain_fc_bigimg.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_22_on_June_04/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0_45_model.pkl'
+            # param_file = 'params/binmatr2_15_8s_sgdadam001+0005_pretrain_nocondecay_comeback.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_53_on_May_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_49_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/07_52_on_June_04/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=1_40_model.pkl'
+            # param_file = 'params/binmatr2_15_8s_sgdadam001+0005_pretrain_condecayall1e-5_comeback.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_35_on_May_20/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1' \
+            #                   r'|weight_de_58_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_condecayall2e-6.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/02_16_on_May_23/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc_consontop.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_46_on_June_08/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay_60_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_fc_bigimg.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_50_on_June_17/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_fc_bigimg_consontop_condecayall1e-5.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_30_on_June_18/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_fc_bigimg_consontop_condecayall3e-5.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_57_on_June_19/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_bigimg.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_41_on_June_21/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_bigimg.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_07_on_June_22/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_rescaled.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_50_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_' + str(epoch) + '_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled.json'
+            save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_' + str(epoch) + '_model.pkl'
+            param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled2.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_25_on_June_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_31_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_rescaled3_bigimg.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/19_15_on_June_28/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_nocomeback_rescaled2.json'
+            # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_00_on_August_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0003|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_16_model.pkl'
+            # param_file = 'params/binmatr2_filterwise_sgdadam001+0003_pretrain_bias_condecayall2e-6_comeback_preciserescaled_rescaled2.json'
 
-        trained_model = load_trained_model(param_file, save_model_path)
-
-        with open(param_file) as json_params:
-            params = json.load(json_params)
-        if 'input_size' in params:
-            if params['input_size'] == 'default':
-                im_size = (64, 64)
-            elif params['input_size'] == 'bigimg':
-                im_size = (128, 128)
-            elif params['input_size'] == 'biggerimg':
-                im_size = (192, 168)
-        else:
-            if 'bigimg' in param_file:  # I remember naming my parameter files consistently
-                im_size = (128, 128)
-            elif 'biggerimg' in param_file:
-                im_size = (192, 168)
-            else:
-                im_size = (64, 64)
-
-        hook_dict = ClassSpecificImageGenerator.hook_model(trained_model['rep'])
-
-
-    else:
-        target_class = 130  # Flamingo
-        pretrained_model = models.alexnet(pretrained=True).to(device)
-        im_size = (224, 224)
-
-    if True:
-        used_neurons = np.load('actually_good_nodes.npy', allow_pickle=True).item()
-
-    batch_size = 1
-    n_steps = 2400
-    if use_my_model:
-        model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
-        for j, layer_name in [(None, 'label')]: # [(None, layers[10])]: # list(enumerate(layers)) + [(None, 'label')]:#
-            if layer_name != 'label':
+            if False:
+                save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_avgadditives' + '.pkl'
+                removed_conns = defaultdict(list)
                 if False:
-                    cur_neurons = used_neurons[j]
-                    cur_neurons = [int(x[x.find('_') + 1:]) for x in cur_neurons]
-                else:
-                    cur_neurons = [17]
-                diversity_layer_name = layer_name
+                    print('Some connections were disabled')
+                    # removed_conns[5] = [(5, 23), (5, 25), (5, 58)]
+                    # removed_conns[8] = [(137, 143)]
+                    # removed_conns[9] = [(142, 188), (216, 188)]
+                    removed_conns[10] = [(188, 104),
+                                         (86, 104)
+                                         ]
+                trained_model = load_trained_model(param_file, save_model_path, if_additives_user=True,
+                                                   if_store_avg_activations_for_disabling=True,
+                                                   conns_to_remove_dict=removed_conns)
             else:
-                cur_neurons = [1]  # range(40)#[task_ind_from_task_name('Chubby')]#
-                diversity_layer_name = layers[-1]
-            for i in cur_neurons:
-                print('Current: ', layer_name, i)
-                # layer_name = 'layer3_1_conv1'#'layer1_1'#'layer1_1_conv1'#'label'#'layer1_0' #
-                csig = ClassSpecificImageGenerator(trained_model, (layer_name, i), im_size, batch_size, True, hook_dict, None,list(range(14)))
-                                                   # ,diversity_layer_name)
-                generated = csig.generate(n_steps, True)
-                #
-                # imshow_path = f"big_diverse_generated_imshow_{model_name_short}"
-                # Path(imshow_path).mkdir(parents=True, exist_ok=True)
-                # imshow_path = f"big_diverse_generated_imshow_{model_name_short}/{layer_name}"
-                # Path(imshow_path).mkdir(parents=True, exist_ok=True)
-                #
-                # separate_path = f"big_diverse_generated_separate_{model_name_short}"
-                # Path(separate_path).mkdir(parents=True, exist_ok=True)
-                # separate_path = f"big_diverse_generated_separate_{model_name_short}/{layer_name}"
-                # Path(separate_path).mkdir(parents=True, exist_ok=True)
-                #
-                # copyfile(f'generated/c_specific_iteration_{n_steps}.jpg', imshow_path + f'/{i}.jpg')
-                if True:
-                    separate_path = 'generated_separate'
-                recreated = csig.recreate_image2_batch(generated)
-                for j in range(batch_size):
-                    save_image(recreated[j], separate_path + f'/{i}_{j}.jpg')
-    else:
-        csig = ClassSpecificImageGenerator(pretrained_model, target_class, im_size, batch_size, False)
-        csig.generate()
+                trained_model = load_trained_model(param_file, save_model_path)
+
+
+            with open(param_file) as json_params:
+                params = json.load(json_params)
+            if 'input_size' in params:
+                if params['input_size'] == 'default':
+                    im_size = (64, 64)
+                elif params['input_size'] == 'bigimg':
+                    im_size = (128, 128)
+                elif params['input_size'] == 'biggerimg':
+                    im_size = (192, 168)
+            else:
+                if 'bigimg' in param_file:  # I remember naming my parameter files consistently
+                    im_size = (128, 128)
+                elif 'biggerimg' in param_file:
+                    im_size = (192, 168)
+                else:
+                    im_size = (64, 64)
+
+            hook_dict = ClassSpecificImageGenerator.hook_model(trained_model['rep'])
+
+
+        else:
+            target_class = 130  # Flamingo
+            pretrained_model = models.alexnet(pretrained=True).to(device)
+            im_size = (224, 224)
+
+        if True:
+            used_neurons = np.load('actually_good_nodes.npy', allow_pickle=True).item()
+
+        batch_size = 1
+        n_steps = 1800
+        if use_my_model:
+            model_name_short = save_model_path[37:53] + '...' + str(epoch)#save_model_path[-12:-10]
+            for j, layer_name in list(enumerate(layers)) + [(None, 'label')]:#[(None, 'label')]: # [(None, layers[0])]: #
+                if layer_name != 'label':
+                    if True:
+                        cur_neurons = used_neurons[j]
+                        cur_neurons = [int(x[x.find('_') + 1:]) for x in cur_neurons]
+                    else:
+                        cur_neurons = [12]
+                    diversity_layer_name = layer_name
+                else:
+                    cur_neurons = range(40) #[task_ind_from_task_name('blackhair')] #
+                    diversity_layer_name = layers[-1]
+                for i in cur_neurons:
+                    print('Current: ', layer_name, i)
+                    # layer_name = 'layer3_1_conv1'#'layer1_1'#'layer1_1_conv1'#'label'#'layer1_0' #
+                    csig = ClassSpecificImageGenerator(trained_model, (layer_name, i), im_size, batch_size, True,
+                                                       hook_dict, None, [], False)#list(range(14)))
+                                                       # ,diversity_layer_name)
+                    generated = csig.generate(n_steps, False)
+
+                    imshow_path = f"big_ordinary_generated_imshow_{model_name_short}"
+                    Path(imshow_path).mkdir(parents=True, exist_ok=True)
+                    imshow_path += f"/{layer_name}"
+                    Path(imshow_path).mkdir(parents=True, exist_ok=True)
+
+                    # separate_path = f"big_ordinary_generated_separate_{model_name_short}"
+                    # Path(separate_path).mkdir(parents=True, exist_ok=True)
+                    # separate_path += f"/{layer_name}"
+                    # Path(separate_path).mkdir(parents=True, exist_ok=True)
+                    # if False:
+                    #     separate_path = 'generated_separate'
+
+                    copyfile(f'generated/c_specific_iteration_{n_steps}.jpg', imshow_path + f'/{i}.jpg')
+
+                    # recreated = csig.recreate_image2_batch(generated)
+                    # for j in range(batch_size):
+                    #     save_image(recreated[j], separate_path + f'/{i}_{j}.jpg')
+        else:
+            csig = ClassSpecificImageGenerator(pretrained_model, target_class, im_size, batch_size, False)
+            csig.generate()
+
+        '''
+        for i, x in enumerate(rep_dict.values()):
+            curmin = 2.0
+            curmax = -2.0
+            for i in range(300):
+                for j in range(i, 300):
+                    cur = x[i].dot(x[j]) / (torch.norm(x[i], p=2) * torch.norm(x[j], p=2))
+                    if cur < curmin:
+                        curmin = cur
+                    if cur > curmax:
+                        curmax = cur
+        print(i, f'min = {curmin} ; max = {curmax}')
+        '''

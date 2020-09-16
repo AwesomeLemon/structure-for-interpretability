@@ -21,6 +21,8 @@ from shutil import copy
 import os
 import torch
 import torchvision.models
+from collections import defaultdict
+from util.util import get_relevant_labels_from_batch
 
 device = torch.device("cuda" if torch.cuda.is_available() and True else "cpu")
 import torch.backends.cudnn as cudnn
@@ -40,7 +42,10 @@ cudnn.enabled = True
 # @click.option('--param_file', default='params/binmatr2_4_4_4_4_4_4_4_4_sgdadam0004_pretrain_fc_bigimg.json', help='JSON parameters file')
 # @click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001_pretrain_condecaytask1e-7.json', help='JSON parameters file')
 # @click.option('--param_file', default='params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_fc_bigimg_consontop.json', help='JSON parameters file')
-@click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_nocondecayall_comeback_consontop_onlybushy.json', help='JSON parameters file')
+# @click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_nocondecayall_comeback_consontop_onlybushy.json', help='JSON parameters file')
+# @click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001_fc_baldonly_weightedce.json', help='JSON parameters file')
+# @click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall5e-7_comeback_weightedce.json', help='JSON parameters file')
+@click.option('--param_file', default='params/binmatr2_cifar_adam0005bias_fc_singletask.json', help='JSON parameters file')
 @click.option('--if_debug/--not_debug', default=True, help='Whether to store results in runs_debug')
 @click.option('--conn_counts_file', default='', help='Path to store number of activated connections '
                                                                   'instead of writing to tensorboard'
@@ -167,10 +172,22 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_22_on_June_26/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/19_15_on_June_28/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_50_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/13_05_on_August_13/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_18_on_August_14/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/13_58_on_August_14/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_91_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_58_on_August_22/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0003|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_26_on_August_29/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_120_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_50_on_August_31/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_37_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/02_15_on_September_01/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_100_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_07_on_September_01/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_82_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_07_on_September_01/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_55_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_28_on_September_02/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_120_model.pkl'
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_46_on_September_06/optimizer=SGD_Adam|batch_size=256|lr=0.005|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
         print('Continuing training from the following path:')
         print(save_model_path)
-        model = load_trained_model(param_file, save_model_path, if_restore_connectivities=True)
+        model = load_trained_model(param_file, save_model_path)
+        state = torch.load(save_model_path)
 
     model_params = []
     if_freeze_normal_params_only = params['freeze_all_but_conns']
@@ -253,10 +270,12 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
 
     elif 'SGD' in params['optimizer']:
         # optimizer = torch.optim.SGD([{'params' : model_params}, {'params':model['rep'].connectivities, 'lr' : 0.2}], lr=lr, momentum=0.9)
-        optimizer = torch.optim.SGD([{'params' : model_params}, {'params':model['rep'].connectivities}], lr=lr, momentum=0.9)
+        optimizer = torch.optim.SGD([{'params' : model_params, 'name':'normal_params'},
+                                     {'params':model['rep'].connectivities, 'name':'connectivities'}], lr=lr, momentum=0.9)
     if if_continue_training:
         if 'SGD_Adam' != params['optimizer']:
             optimizer.load_state_dict(state['optimizer_state'])
+
 
     print(model['rep'])
 
@@ -264,6 +283,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
 
     # train2_loader_iter = iter(train2_loader)
     NUM_EPOCHS = 120
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, NUM_EPOCHS)
 
     print(f'NUM_EPOCHS={NUM_EPOCHS}')
     n_iter = 0
@@ -317,8 +337,8 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
     for epoch in range(NUM_EPOCHS):
         start = timer()
         print('Epoch {} Started'.format(epoch))
-        # if (epoch + 1) % 30 == 0:
-        #     lr_multiplier = 0.5
+        # if (epoch + 1) % 50 == 0:
+        #     lr_multiplier = 0.1
         #     for param_group in optimizer.param_groups:
         #         if param_group['name'] == 'connectivities':
         #             continue #don't wanna mess with connectivities
@@ -337,25 +357,10 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
             print(n_iter)
             n_iter += 1
 
-            def get_relevant_labels_from_batch(batch):
-                labels = {}
-                # Read all targets of all tasks
-                for i, t in enumerate(all_tasks):
-                    if t not in tasks:
-                        continue
-                    if params['dataset'] == 'cifar10':
-                        labels[t] = (batch[1] == int(t)).type(torch.LongTensor)
-                    elif params['dataset'] == 'cifarfashionmnist':
-                        labels[t] = (batch[1] == int(t)).type(torch.LongTensor)
-                    else:
-                        labels[t] = batch[i + 1]
-                    labels[t] = labels[t].to(device)
-                return labels
-
             # First member is always images
             images = batch[0]
             images = images.to(device)
-            labels = get_relevant_labels_from_batch(batch)
+            labels = get_relevant_labels_from_batch(batch, all_tasks, tasks, params, device)
 
             loss_data = {}
 
@@ -390,11 +395,12 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
                     rep = reps[i]
                 out_t, _ = model[t](rep, None)
                 loss_t = loss_fn[t](out_t, labels[t])
-                loss_data[t] = loss_t.item()
+                loss_data[t] = scale[t] * loss_t.item()
                 loss = loss + scale[t] * loss_t
             loss.backward()
             # plot_grad_flow(model['rep'].named_parameters())
             optimizer.step()
+            # scheduler.step()
 
             writer.add_scalar('training_loss', loss.item(), n_iter)
             writer.add_scalar('l1_reg_loss', loss_reg_value, n_iter)
@@ -422,7 +428,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         with torch.no_grad():
             for batch_val in val_loader:
                 val_images = batch_val[0].to(device)
-                labels_val = get_relevant_labels_from_batch(batch_val)
+                labels_val = get_relevant_labels_from_batch(batch_val, all_tasks, tasks, params, device)
                 # labels_val = {}
                 #
                 # for i, t in enumerate(all_tasks):
@@ -442,22 +448,26 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
                     # tot_loss['all'] += loss_t.item()
                     #todo: I think old way of calculating validation loss was wrong, because we also divided l1 loss by the number of tasks
                     tot_loss['all'] += scale[t] * loss_t.item()
-                    tot_loss[t] += loss_t.item()
+                    tot_loss[t] += scale[t] * loss_t.item()
                     metric[t].update(out_t_val, labels_val[t])
                 num_val_batches += 1
 
-        error_sum = 0
+        error_sums = defaultdict(lambda: 0)
         for t in tasks:
-            writer.add_scalar('validation_loss_{}'.format(t), tot_loss[t] / num_val_batches, n_iter)
+            if False:
+                writer.add_scalar('validation_loss_{}'.format(t), tot_loss[t] / num_val_batches, n_iter)
             metric_results = metric[t].get_result()
             for metric_key in metric_results:
+                # if metric_key == 'acc_blncd':
                 writer.add_scalar('metric_{}_{}'.format(metric_key, t), metric_results[metric_key], n_iter)
-                error_sum += 1 - metric_results[metric_key]
+                error_sums[metric_key] += 1 - metric_results[metric_key]
             metric[t].reset()
 
-        error_sum /= float(len(tasks))
-        writer.add_scalar('average_error', error_sum * 100, n_iter)
-        print(f'average_error = {error_sum * 100}')
+        for metric_key in metric_results:
+            error_sum = error_sums[metric_key]
+            error_sum /= float(len(tasks))
+            writer.add_scalar(f'average_error_{metric_key}', error_sum * 100, n_iter)
+            print(f'average_error_{metric_key} = {error_sum * 100}')
 
         # writer.add_scalar('validation_loss', tot_loss['all'] / num_val_batches / len(tasks), n_iter)
         # todo: I think old way of calculating validation loss was wrong, because we also divided l1 loss by the number of tasks

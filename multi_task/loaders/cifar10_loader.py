@@ -13,10 +13,6 @@ import torchvision.transforms as transforms
 
 class CIFAR10(torchvision.datasets.CIFAR10):
     def __init__(self, root, split="train"):
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-        ])
 
         if_test_split = False
 
@@ -27,10 +23,24 @@ class CIFAR10(torchvision.datasets.CIFAR10):
                 ['data_batch_3', '54ebc095f3ab1f0389bbae665268c751'],
                 ['data_batch_4', '634d18415352ddfa80567beed471001a'],
             ]
+            transform = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            ])
         elif split == 'val':
             torchvision.datasets.CIFAR10.train_list = [['data_batch_5', '482c414d41f54cd18b22e5b47cb7c3cb']]
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            ])
         elif split == 'test':
             if_test_split = True
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            ])
         else:
             raise NotImplementedError('Other splits not yet supported')
 

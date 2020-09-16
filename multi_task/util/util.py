@@ -17,6 +17,7 @@ from skimage.filters import gaussian
 from scipy.ndimage.interpolation import shift
 import shutil
 from matplotlib import pyplot as plt
+from fuzzywuzzy import process
 
 celeba_dict = {0: '5_o_Clock_Shadow', 1: 'Arched_Eyebrows', 2: 'Attractive', 3: 'Bags_Under_Eyes', 4: 'Bald',
                5: 'Bangs', 6: 'Big_Lips', 7: 'Big_Nose', 8: 'Black_Hair', 9: 'Blond_Hair', 10: 'Blurry',
@@ -27,10 +28,14 @@ celeba_dict = {0: '5_o_Clock_Shadow', 1: 'Arched_Eyebrows', 2: 'Attractive', 3: 
                31: 'Smiling', 32: 'Straight_Hair', 33: 'Wavy_Hair', 34: 'Wearing_Earrings', 35: 'Wearing_Hat',
                36: 'Wearing_Lipstick', 37: 'Wearing_Necklace', 38: 'Wearing_Necktie', 39: 'Young'}
 
+
 def task_ind_from_task_name(task_name):
+    task_name = process.extractOne(task_name, celeba_dict.values())[0]
+    print(task_name)
     for idx, task in celeba_dict.items():
         if task == task_name:
             return idx
+
 
 layers = ['layer1_0',
           'layer1_1_conv1', 'layer1_1',
@@ -42,6 +47,22 @@ layers = ['layer1_0',
           'layer4_1_conv1', 'layer4_1',
           ]
 
+layers_bn = ['layer1_0',
+             'layer1_1_bn1', 'layer1_1',
+             'layer2_0_bn1', 'layer2_0',
+             'layer2_1_bn1', 'layer2_1',
+             'layer3_0_bn1', 'layer3_0',
+             'layer3_1_bn1', 'layer3_1',
+             'layer4_0_bn1', 'layer4_0',
+             'layer4_1_bn1', 'layer4_1',
+             ]
+
+cifar10_names = ['airplane', 'automobile', 'bird', 'cat', 'deer',
+                 'dog', 'frog', 'horse', 'ship', 'truck']
+fashionmnist_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
+                      'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
+cifarfashion_dict = dict(zip(range(20), cifar10_names + fashionmnist_names))
+cifar10_dict = dict(zip(range(10), cifar10_names))
 
 def pad_to_correct_shape(img, width, height):
     # return skimage.transform.resize(img, (width, width), order=3)
@@ -149,7 +170,7 @@ def identity(img):
 
 
 def blur(img):
-    img = gaussian(img, sigma=2.0#0.4
+    img = gaussian(img, sigma=2.0  # 0.4
                    , multichannel=True,
                    mode='reflect', preserve_range=True)
     return img
@@ -205,7 +226,7 @@ def format_np_output(np_arr):
 
 
 def save_image_batch(im_batch, path):
-    fig = plt.figure(figsize=(10, 4.5)) #(20, 5)
+    fig = plt.figure(figsize=(10, 4.5))  # (20, 5)
     im_total = len(im_batch)
     rows_num = 2
     cols_num = int(math.ceil(im_total / rows_num))
@@ -246,3 +267,105 @@ def normalize_grad(grad):
     #     res[:, channel, :, :] *= std[channel]
     # print(torch.norm(res, 2, dim=(-1, -2, -3)))
     return res
+
+
+def punish_outside_center(tensor):
+    # N, C, H, W
+    a = b = tensor.size(2) // 2
+    n = tensor.size(2)
+    r = 15
+
+    y, x = np.ogrid[-a:n - a, -b:n - b]
+    mask = x * x + y * y <= r * r
+    mask = torch.tensor(np.repeat(mask[None, :, :], tensor.size(1), axis=0)[None, ...])
+    tensor2 = tensor.clone()
+    tensor2[mask] = 0
+    return -tensor2.mean()
+
+
+def images_list_to_grid_image(ims):
+    n_ims = len(ims)
+    width, height = ims[0].size
+    rows_num = math.floor(math.sqrt(n_ims))
+    cols_num = int(math.ceil(n_ims / rows_num))
+    new_im = Image.new('RGB', (cols_num * width, rows_num * height))
+    for j in range(n_ims):
+        row = j // cols_num
+        column = j - row * cols_num
+        new_im.paste(ims[j], (column * width, row * height))
+    return new_im
+
+
+def proper_hist(data, title='', ax=None, xlim_left=None, xlim_right=None, bin_size=0.1, alpha=1, density=None):
+    bins = math.ceil((data.max() - data.min()) / bin_size)
+    if data.max() - data.min() == 0:
+        bins = None
+    if ax is None:
+        plt.hist(data, bins, alpha=alpha, density=density)
+        plt.xlim(left=xlim_left, right=xlim_right)
+        plt.title(title)
+    else:
+        ax.hist(data, bins, alpha=alpha, density=density)
+        ax.set_xlim(left=xlim_left, right=xlim_right)
+        ax.set_title(title)
+
+
+def recreate_image_cifarfashionmnist_batch(img):
+    img = img.cpu().data.numpy()
+    recreated_ims = []
+    for i in range(img.shape[0]):
+        recreated_im = np.copy(img[i])
+
+        means = np.array([0.4914, 0.4822, 0.4465]) * 255
+        std = [0.2023, 0.1994, 0.2010]
+
+        # CHW -> HWC
+        recreated_im = recreated_im.transpose((1, 2, 0))
+
+        for channel in range(3):
+            recreated_im[:, :, channel] *= std[channel]
+
+        recreated_im *= 255.0
+        for i in range(3):
+            recreated_im[:, :, i] += means[i]
+
+        recreated_im[recreated_im > 255.0] = 255.0
+        recreated_im[recreated_im < 0.0] = 0.0
+
+        recreated_im = np.round(recreated_im)
+        recreated_im = np.uint8(recreated_im)
+
+        # BGR to RGB:
+        recreated_im = recreated_im[:, :, [2, 1, 0]]
+
+        recreated_ims.append(recreated_im)
+    return recreated_ims
+
+
+def get_relevant_labels_from_batch(batch, all_tasks, tasks, params, device):
+    labels = {}
+    # Read all targets of all tasks
+    for i, t in enumerate(all_tasks):
+        if t not in tasks:
+            continue
+        if params['dataset'] == 'cifar10':
+            labels[t] = (batch[1] == int(t)).type(torch.LongTensor)
+        elif params['dataset'] == 'cifarfashionmnist':
+            labels[t] = (batch[1] == int(t)).type(torch.LongTensor)
+        elif params['dataset'] == 'cifar10_singletask':
+            labels[t] = batch[1]
+        else:
+            labels[t] = batch[i + 1]
+        labels[t] = labels[t].to(device)
+    return labels
+
+
+def store_path_to_label_dict(loader, store_path):
+    path_to_label_dict = {}
+    for batch in loader:
+        paths = batch[-1]
+        labels = torch.stack(batch[1:-1]).cpu().detach().numpy()
+        for i, path in enumerate(paths):
+            path_to_label_dict[path] = labels[:, i]
+
+    np.save(store_path, path_to_label_dict, allow_pickle=True)

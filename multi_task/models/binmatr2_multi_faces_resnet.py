@@ -1,4 +1,5 @@
 # Adapted from: https://github.com/pytorch/vision/blob/master/torchvision/models/resnet.py
+from collections import defaultdict
 
 import torch
 import torch.nn as nn
@@ -169,129 +170,13 @@ class BasicBlockMock(BasicBlock):
                     raise ValueError('If identity shortcut, either all 3 conns are not-None, or all 3 are None. '
                                      'This was violated.')
 
-
-class BasicBlockBiasCreator(BasicBlock):
-    expansion = 1
-
-    def forward(self, x):
-        if_bias_shortcut = False
-        shortcut_modules = list(self.shortcut.children())
-        if (len(shortcut_modules) > 0) and (type(shortcut_modules[0]) is MaskedConv2d):
-            if_bias_shortcut = True
-        pre_conv1 = x
-
-        if type(self.conv1) is MaskedConv2d:
-            const_features_input_idx = []
-            for i in range(self.conv1.in_channels):
-                cur_feature = pre_conv1[:, i]
-                if (cur_feature.min() == cur_feature.max()):
-                    const_features_input_idx.append(i)
-            additives_dict = {}
-            if self.conv1.ordinary_conv.bias is None:
-                self.conv1.ordinary_conv.bias = torch.nn.Parameter(torch.zeros((self.conv1.out_channels)).to(device))
-            if if_bias_shortcut and (shortcut_modules[0].ordinary_conv.bias is None):
-                shortcut_modules[0].ordinary_conv.bias = torch.nn.Parameter(torch.zeros((shortcut_modules[0].out_channels)).to(device))
-            for i in const_features_input_idx:
-                connected_to_i_idx = torch.where(self.conv1.connectivity[0][:, i] > 0.5)[0]
-
-                temp = self.conv1.connectivity[0].detach().clone()
-                self.conv1.connectivity[0] *= 0.0
-                self.conv1.connectivity[0][connected_to_i_idx, i] += 1.0
-
-                post_conv1_only_cur_input = self.conv1(pre_conv1)
-                if if_bias_shortcut:
-                    post_shortcut_only_cur_input = shortcut_modules[0](x)
-                for j in connected_to_i_idx:
-                    # if i == 88:
-                    #     print(post_conv2_bn_only_cur_input[0, j, :6, :5])
-                    #     print(post_conv2_bn_only_cur_input[17, j, :6, :5])
-
-                    self.conv1.ordinary_conv.bias[j] = post_conv1_only_cur_input[0, j, 4, 4]  # arbitrary not-border index
-                    # if j not in additives_dict:
-                    #     additives_dict[j] = post_conv2_only_cur_input[0:1, j:j+1, :, :]
-                    # else:
-                    #     additives_dict[j] += post_conv2_only_cur_input[0:1, j:j + 1, :, :]
-
-                    # a crude sanity check (comparison with other arbitrary sample & not-border index)
-                    if not (torch.isclose(post_conv1_only_cur_input[0, j, 4, 4], post_conv1_only_cur_input[17, j, 5, 3],
-                                          rtol=1e-4)):
-                        print('!!!', i)
-
-                    if if_bias_shortcut:
-                        shortcut_modules[0].ordinary_conv.bias[j] = post_shortcut_only_cur_input[0, j, 4, 4]
-                        if not (torch.isclose(post_shortcut_only_cur_input[0, j, 4, 4], post_shortcut_only_cur_input[17, j, 5, 3],
-                                      rtol=1e-4)):
-                            print('!!!', i)
-
-                self.conv1.connectivity[0].data = temp.data
-                self.conv1.connectivity[0][:, i] *= 0.0
-
-            post_conv1 = self.conv1(pre_conv1)
-            # for key, value in additives_dict.items():
-            #     post_conv2[:, key:key+1, :, :] += additives_dict[key]
-            post_conv1_bn = F.relu(self.bn1(post_conv1))
-
-        if not(type(self.conv1) is MaskedConv2d):
-            post_conv1 = self.conv1(pre_conv1)
-            post_conv1_bn = F.relu(self.bn1(post_conv1))
-
-        if type(self.conv2) is MaskedConv2d:
-            const_features_conv1_idx = []
-            for i in range(self.conv1.out_channels):
-                cur_feature = post_conv1_bn[:, i]
-                if (cur_feature.min() == cur_feature.max()):
-                    const_features_conv1_idx.append(i)
-            additives_dict = {}
-            if self.conv2.ordinary_conv.bias is None:
-                self.conv2.ordinary_conv.bias = torch.nn.Parameter(torch.zeros((self.conv2.out_channels)).to(device))
-            for i in const_features_conv1_idx:
-                connected_to_i_idx = torch.where(self.conv2.connectivity[0][:, i] > 0.5)[0]
-
-                temp = self.conv2.connectivity[0].detach().clone()
-                self.conv2.connectivity[0] *= 0.0
-                self.conv2.connectivity[0][connected_to_i_idx, i] += 1.0
-
-                post_conv2_only_cur_input = self.conv2(post_conv1_bn)
-                for j in connected_to_i_idx:
-                    # if i == 88:
-                    #     print(post_conv2_bn_only_cur_input[0, j, :6, :5])
-                    #     print(post_conv2_bn_only_cur_input[17, j, :6, :5])
-
-                    self.conv2.ordinary_conv.bias[j] = post_conv2_only_cur_input[
-                        0, j, 4, 4]  # arbitrary not-border index
-                    # if j not in additives_dict:
-                    #     additives_dict[j] = post_conv2_only_cur_input[0:1, j:j+1, :, :]
-                    # else:
-                    #     additives_dict[j] += post_conv2_only_cur_input[0:1, j:j + 1, :, :]
-
-                    # a crude sanity check (comparison with other arbitrary sample & not-border index)
-                    if not (torch.isclose(post_conv2_only_cur_input[0, j, 4, 4], post_conv2_only_cur_input[17, j, 5, 3],
-                                          rtol=1e-4)):
-                        print('!!!', i)
-
-                self.conv2.connectivity[0].data = temp.data
-                self.conv2.connectivity[0][:, i] *= 0.0
-
-            post_conv2 = self.conv2(post_conv1_bn)
-            # for key, value in additives_dict.items():
-            #     post_conv2[:, key:key+1, :, :] += additives_dict[key]
-            post_conv2_bn = self.bn2(post_conv2)
-
-        if not (type(self.conv2) is MaskedConv2d):
-            post_conv2 = self.conv2(post_conv1_bn)
-            post_conv2_bn = self.bn2(post_conv2)
-
-        out = post_conv2_bn
-
-        out += self.shortcut(x)
-        out = F.relu(out)
-        return out
-
-
 def are_activations_for_each_input_equal(activations):
     return torch.eq(activations.min(dim=0)[0], activations.max(dim=0)[0]).all()
 
 class BasicBlockAdditivesCreator(BasicBlock):
+    '''
+    this class is for converting constant inputs to constant additives
+    '''
     expansion = 1
     id = 0
     additives_dict = {}
@@ -505,6 +390,220 @@ class BasicBlockMockAdditivesUser(BasicBlock):
         return out
 
 
+class BasicBlockAvgAdditivesCreator(BasicBlock):
+    '''
+    this class is for converting non-constant inputs to constant (average) additives
+    current limitations:
+        - shortcuts aren't handled properly
+        - connections to task heads aren't handled properly
+    '''
+    expansion = 1
+    id = 0
+    additives_dict = {}
+    used_neurons = np.load('actually_good_nodes.npy', allow_pickle=True).item()
+
+    @staticmethod
+    def get_indices_of_used_neurons(layer_ind):
+        return np.array([int(x[x.find('_') + 1:]) for x in BasicBlockAvgAdditivesCreator.used_neurons[layer_ind]])
+
+    def forward(self, x):
+        assert BasicBlockAvgAdditivesCreator.id < 16, 'only a single forward pass should be made'
+        if_projection_shortcut = False
+        shortcut_modules = list(self.shortcut.children())
+        if (len(shortcut_modules) > 0) and (type(shortcut_modules[0]) is MaskedConv2d):
+            if_projection_shortcut = True
+        if_identity_shortcut = not if_projection_shortcut
+        pre_conv1 = x
+        additives_dict_cur = {'conv1':{}, 'shortcut':{}, 'shortcut_id':{}, 'conv2':{}}
+
+        if not(type(self.conv1) is MaskedConv2d): #the 0-th block
+            post_conv1 = self.conv1(pre_conv1)
+            post_conv1_bn = F.relu(self.bn1(post_conv1))
+        else:
+            corresponding_layer_ind_conv1 = (BasicBlockAvgAdditivesCreator.id - 1) * 2 #0-th block is without connectivities
+            corresponding_layer_ind_conv2 = corresponding_layer_ind_conv1 + 1
+            relevant_conv1_input_idx = set(BasicBlockAvgAdditivesCreator.get_indices_of_used_neurons(corresponding_layer_ind_conv1))
+            relevant_conv2_input_idx = set(BasicBlockAvgAdditivesCreator.get_indices_of_used_neurons(corresponding_layer_ind_conv2))
+                #conv2_input is other name for conv1_output
+            if if_identity_shortcut:  # don't need the processing per outgoing connection in the 'for' below
+                for i in relevant_conv1_input_idx:
+                    additives_dict_cur['shortcut_id'][i] = x[:, i:i+1, :, :].mean(dim=0, keepdim=True)
+            if self.conv1.ordinary_conv.bias is not None:
+                conv1_bias_stored = self.conv1.ordinary_conv.bias.detach().clone()
+                self.conv1.ordinary_conv.bias *= 0
+                if if_projection_shortcut:
+                    shortcut_bias_stored = shortcut_modules[0].ordinary_conv.bias.detach().clone()
+                    shortcut_modules[0].ordinary_conv.bias *= 0
+            for i in relevant_conv1_input_idx:
+                connected_to_i_idx = torch.where(self.conv1.connectivity[0][:, i] > 0.5)[0].cpu().numpy()
+                connected_to_i_idx = set(connected_to_i_idx).intersection(relevant_conv2_input_idx)
+                if_only_shortcut_conn_exists = len(connected_to_i_idx) == 0#this means that only shortcut connections exists
+
+                temp = self.conv1.connectivity[0].detach().clone()
+                self.conv1.connectivity[0] *= 0.0
+                if not if_only_shortcut_conn_exists:
+                    connected_to_i_idx = np.array(list(connected_to_i_idx))
+                    self.conv1.connectivity[0][connected_to_i_idx, i] += 1.0
+
+                post_conv1_only_cur_input = self.conv1(pre_conv1)
+                if if_projection_shortcut:
+                    post_shortcut_only_cur_input = shortcut_modules[0](x)
+                    additives_dict_cur['shortcut'][i] = {}
+
+                additives_dict_cur['conv1'][i] = {}
+
+                if not if_only_shortcut_conn_exists:
+                    for j in connected_to_i_idx:
+                        additives_dict_cur['conv1'][i][j] = post_conv1_only_cur_input[:, j:j+1, :, :].mean(axis=0, keepdim=True)
+
+                if if_projection_shortcut:
+                    corresponding_layer_ind_nextlayer = corresponding_layer_ind_conv2 + 1
+                    relevant_nextlayer_idx = set(
+                        BasicBlockAvgAdditivesCreator.get_indices_of_used_neurons(corresponding_layer_ind_nextlayer))
+                    for j in relevant_nextlayer_idx:
+                        additives_dict_cur['shortcut'][i][j] = post_shortcut_only_cur_input[:, j:j + 1, :, :].mean(axis=0, keepdim=True)
+
+                self.conv1.connectivity[0].data = temp.data
+
+            if self.conv1.ordinary_conv.bias is not None:
+                self.conv1.ordinary_conv.bias.data = conv1_bias_stored
+                if if_projection_shortcut:
+                    shortcut_modules[0].ordinary_conv.bias.data = shortcut_bias_stored
+            post_conv1 = self.conv1(pre_conv1)
+            post_conv1_bn = F.relu(self.bn1(post_conv1))
+
+        if not (type(self.conv2) is MaskedConv2d):
+            post_conv2 = self.conv2(post_conv1_bn)
+            post_conv2_bn = self.bn2(post_conv2)
+        else:
+            if self.conv2.ordinary_conv.bias is not None:
+                conv2_bias_stored = self.conv2.ordinary_conv.bias.detach().clone()
+                self.conv2.ordinary_conv.bias *= 0
+
+            corresponding_layer_ind_nextlayer = corresponding_layer_ind_conv2 + 1
+            relevant_nextlayer_idx = set(BasicBlockAvgAdditivesCreator.get_indices_of_used_neurons(corresponding_layer_ind_nextlayer))
+
+            for i in relevant_conv2_input_idx:
+                connected_to_i_idx = torch.where(self.conv2.connectivity[0][:, i] > 0.5)[0].cpu().numpy()
+                connected_to_i_idx = set(connected_to_i_idx).intersection(relevant_nextlayer_idx)
+                if len(connected_to_i_idx) == 0:#this means that only shortcut connections exists => implement later
+                    continue
+                connected_to_i_idx = np.array(list(connected_to_i_idx))
+
+                temp = self.conv2.connectivity[0].detach().clone()
+                self.conv2.connectivity[0] *= 0.0
+                self.conv2.connectivity[0][connected_to_i_idx, i] += 1.0
+
+                post_conv2_only_cur_input = self.conv2(post_conv1_bn)
+                additives_dict_cur['conv2'][i] = {}
+                for j in connected_to_i_idx:
+                    additives_dict_cur['conv2'][i][j] = post_conv2_only_cur_input[:, j:j+1, :, :].mean(dim=0, keepdim=True)
+
+                self.conv2.connectivity[0].data = temp.data
+
+            if self.conv2.ordinary_conv.bias is not None:
+                self.conv2.ordinary_conv.bias.data = conv2_bias_stored
+            post_conv2 = self.conv2(post_conv1_bn)
+            post_conv2_bn = self.bn2(post_conv2)
+
+        out = post_conv2_bn
+
+        if if_projection_shortcut:
+            shortcut_out = shortcut_modules[0](x)
+            shortcut_out = shortcut_modules[1](shortcut_out)
+            out += shortcut_out
+        elif if_identity_shortcut:
+            out += self.shortcut(x)
+        out = F.relu(out)
+
+        BasicBlockAvgAdditivesCreator.additives_dict[BasicBlockAvgAdditivesCreator.id] = additives_dict_cur
+        BasicBlockAvgAdditivesCreator.id += 1
+        return out
+
+
+
+class BasicBlockAvgAdditivesUser(BasicBlock):
+    '''
+    this class is for converting non-constant inputs to constant (average) additives
+    current limitations:
+        - shortcuts aren't handled properly
+        - connections to task heads aren't handled properly
+    '''
+    expansion = 1
+    id = 0
+    additives_dict = {}
+    connections_to_remove = defaultdict(list) # layer -> [(from1, to1), (from2, to2),..]
+
+    def __init__(self, in_planes, planes, stride=1, connectivity=(None, None), if_enable_bias=False):
+        super().__init__(in_planes, planes, stride, connectivity, if_enable_bias)
+        self.id = self.__class__.id
+        self.__class__.id += 1
+
+    def forward(self, x):
+        if_projection_shortcut = False
+        shortcut_modules = list(self.shortcut.children())
+        if (len(shortcut_modules) > 0) and (type(shortcut_modules[0]) is MaskedConv2d):
+            if_projection_shortcut = True
+        if_identity_shortcut = not if_projection_shortcut
+        pre_conv1 = x
+        additives_dict_cur = self.__class__.additives_dict[self.id]
+
+        if not(type(self.conv1) is MaskedConv2d): #the 0-th block
+            post_conv1 = self.conv1(pre_conv1)
+            post_conv1_bn = F.relu(self.bn1(post_conv1))
+        else:
+            corresponding_layer_ind_conv1 = (self.id - 1) * 2 #0-th block is without connectivities
+            conns_to_remove_cur = self.__class__.connections_to_remove[corresponding_layer_ind_conv1]
+
+            with torch.no_grad():
+                for (from_idx, to_idx) in conns_to_remove_cur:
+                    self.conv1.connectivity[0][to_idx, from_idx] *= 0.0
+            post_conv1 = self.conv1(pre_conv1)
+            for (from_idx, to_idx) in conns_to_remove_cur:
+                post_conv1[:, to_idx, :, :] += additives_dict_cur['conv1'][from_idx][to_idx][0]#.max() / 3
+                    #the last index 0 above is because the stored shape is [1,stuff], and LHS is just [stuff]
+            post_conv1_bn = F.relu(self.bn1(post_conv1))
+
+        if not (type(self.conv2) is MaskedConv2d):
+            post_conv2 = self.conv2(post_conv1_bn)
+            post_conv2_bn = self.bn2(post_conv2)
+        else:
+            corresponding_layer_ind_conv2 = corresponding_layer_ind_conv1 + 1
+            conns_to_remove_cur = self.__class__.connections_to_remove[corresponding_layer_ind_conv2]
+
+            with torch.no_grad():
+                for (from_idx, to_idx) in conns_to_remove_cur:
+                    self.conv2.connectivity[0][to_idx, from_idx] = 0.0
+            post_conv2 = self.conv2(post_conv1_bn)
+            for (from_idx, to_idx) in conns_to_remove_cur:
+                post_conv2[:, to_idx, :, :] += additives_dict_cur['conv2'][from_idx][to_idx][0]#.max() / 3
+            post_conv2_bn = self.bn2(post_conv2)
+
+        out = post_conv2_bn
+
+        if not (type(self.conv1) is MaskedConv2d):
+            out += self.shortcut(x)
+        else:
+            if if_projection_shortcut:
+                conns_to_remove_shortcut = self.__class__.connections_to_remove['shortcut'][corresponding_layer_ind_conv1]
+                shortcut_out = shortcut_modules[0](x)
+                shortcut_out = shortcut_modules[1](shortcut_out)
+                for (from_idx, to_idx) in conns_to_remove_shortcut:
+                    shortcut_out[:, to_idx, :, :] = additives_dict_cur['shortcut'][from_idx][to_idx]
+                out += shortcut_out
+            elif if_identity_shortcut:
+                conns_to_remove_shortcut = self.__class__.connections_to_remove['shortcut'][corresponding_layer_ind_conv1]
+                shortcut_out = self.shortcut(x)
+                for (from_idx, to_idx) in conns_to_remove_shortcut:
+                    assert from_idx == to_idx
+                    shortcut_out[:, to_idx, :, :] = additives_dict_cur['shortcut_id'][to_idx]
+                out += shortcut_out
+
+        out = F.relu(out)
+
+        return out
+
+
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -548,7 +647,7 @@ class Bottleneck(nn.Module):
 class BinMatrResNet(nn.Module):
     def __init__(self, block, num_blocks, num_chunks, width_mul, if_fully_connected,
                  if_cifar=False, num_tasks=40, input_size='default', auxillary_connectivities_for_id_shortcut=None,
-                 if_enable_bias=False, replace_constants_last_layer_mode=None):
+                 if_enable_bias=False, replace_constants_last_layer_mode=None, replace_with_avgs_last_layer_mode=None):
         super(BinMatrResNet, self).__init__()
         self.block = [block]
         self.if_fully_connected = if_fully_connected
@@ -559,6 +658,8 @@ class BinMatrResNet(nn.Module):
         self.input_size = input_size
         if_restore_aux = auxillary_connectivities_for_id_shortcut is not None
         self.replace_constants_last_layer_mode = replace_constants_last_layer_mode
+        self.replace_with_avgs_last_layer_mode = replace_with_avgs_last_layer_mode
+        assert (replace_constants_last_layer_mode is None) or (replace_with_avgs_last_layer_mode is None)
 
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=if_enable_bias)
         self.bn1 = nn.BatchNorm2d(64)
@@ -605,7 +706,7 @@ class BinMatrResNet(nn.Module):
                 all_conns = [(None, None, None)] + list(zip(conn_range[::2], conn_range[1::2], aux_range[::2]))
             else:
                 all_conns = [(None, None)] + list(zip(conn_range[::2], conn_range[1::2]))
-            self.layer1 = self._make_layer(block, 64 * width_mul, num_blocks[0], 1, all_conns, if_enable_bias)
+            self.layer1 = self._make_layer(block, int(64 * width_mul), num_blocks[0], 1, all_conns, if_enable_bias)
             n_used_conns += (num_blocks[0] - 1) * 2
             print(f'n_used_conns = {n_used_conns}')
 
@@ -616,7 +717,7 @@ class BinMatrResNet(nn.Module):
                 all_conns = list(zip(conn_range[::2], conn_range[1::2], aux_range[::2]))
             else:
                 all_conns = list(zip(conn_range[::2], conn_range[1::2]))
-            self.layer2 = self._make_layer(block, 128 * width_mul, num_blocks[1], 2, all_conns, if_enable_bias)
+            self.layer2 = self._make_layer(block, int(128 * width_mul), num_blocks[1], 2, all_conns, if_enable_bias)
             n_used_conns += num_blocks[1] * 2
             print(f'n_used_conns = {n_used_conns}')
 
@@ -627,7 +728,7 @@ class BinMatrResNet(nn.Module):
                 all_conns = list(zip(conn_range[::2], conn_range[1::2], aux_range[::2]))
             else:
                 all_conns = list(zip(conn_range[::2], conn_range[1::2]))
-            self.layer3 = self._make_layer(block, 256 * width_mul, num_blocks[2], 2, all_conns, if_enable_bias)
+            self.layer3 = self._make_layer(block, int(256 * width_mul), num_blocks[2], 2, all_conns, if_enable_bias)
             n_used_conns += num_blocks[2] * 2
             print(f'n_used_conns = {n_used_conns}')
 
@@ -638,7 +739,7 @@ class BinMatrResNet(nn.Module):
                 all_conns = list(zip(conn_range[::2], conn_range[1::2], aux_range[::2]))
             else:
                 all_conns = list(zip(conn_range[::2], conn_range[1::2]))
-            self.layer4 = self._make_layer(block, 512 * width_mul, num_blocks[3], 2, all_conns, if_enable_bias)
+            self.layer4 = self._make_layer(block, int(512 * width_mul), num_blocks[3], 2, all_conns, if_enable_bias)
             n_used_conns += num_blocks[3] * 2
             print(f'n_used_conns = {n_used_conns}')
         else:
@@ -761,6 +862,9 @@ class BinMatrResNet(nn.Module):
                 #crude self-check
                 assert out[0, i] == out[17, i]
                 connectivity[:, i] *= 0.0
+        elif self.replace_with_avgs_last_layer_mode == 'store':
+            assert filter_to_chunks_factor == (1, 1) #this makes sense only when 1 block == 1 filter
+            self.last_layer_additives = out.mean(dim=0).squeeze()
 
         binarized_connectivity = BinarizeByThreshold.apply(connectivity)
 
@@ -769,20 +873,35 @@ class BinMatrResNet(nn.Module):
                 cur_connectivity = binarized_connectivity[i][:, None]
             else:
                 cur_connectivity = kronecker(binarized_connectivity[i][:, None], chunks_to_filters_for_kronecker)
+
+            if (self.replace_with_avgs_last_layer_mode == 'restore'):
+                conns_to_remove_all = self.block[0].connections_to_remove['label']
+                conns_to_remove_cur = []
+                for neuron_from, neuron_to in conns_to_remove_all:
+                    if neuron_to == i:
+                        cur_connectivity[neuron_from] = 0.0
+                        conns_to_remove_cur.append(neuron_from)
+                conns_to_remove_cur = np.array(conns_to_remove_cur)
+
             out_cur = (out * cur_connectivity).squeeze(-1)
+
+            if (self.replace_with_avgs_last_layer_mode == 'restore'):
+                if len(conns_to_remove_cur) > 0:
+                    out_cur[:, conns_to_remove_cur] += self.last_layer_additives[conns_to_remove_cur].unsqueeze(0).repeat(out_cur.size(0), 1)
             # if i in [0,2,5,15,28]:
             #     print("AAAAAAAAAAAAAAAAAAAAAAAAA, DOING SOMETHING REALLY STUPID")
             #     out_cur[:, 148] = 0.8824
             if (self.replace_constants_last_layer_mode == 'store') or (self.replace_constants_last_layer_mode == 'restore'):
                 out_cur += self.last_layer_additives[i].unsqueeze(0).repeat(out_cur.size(0), 1)
+
             outs.append(out_cur)
         return outs
 
 
 class FaceAttributeDecoder(nn.Module):
-    def __init__(self):
+    def __init__(self, dim=512):
         super(FaceAttributeDecoder, self).__init__()
-        self.linear = nn.Linear(512, 2)
+        self.linear = nn.Linear(dim, 2)
 
     def forward(self, x, mask):
         x = self.linear(x)
@@ -794,6 +913,16 @@ class FaceAttributeDecoderCifar10(nn.Module):
     def __init__(self):
         super(FaceAttributeDecoderCifar10, self).__init__()
         self.linear = nn.Linear(512, 2)
+
+    def forward(self, x, mask):
+        x = self.linear(x)
+        out = F.log_softmax(x, dim=1)
+        return out, mask
+
+class FaceAttributeDecoderCifar10SingleTask(nn.Module):
+    def __init__(self, dim=512):
+        super(FaceAttributeDecoderCifar10SingleTask, self).__init__()
+        self.linear = nn.Linear(dim, 10)
 
     def forward(self, x, mask):
         x = self.linear(x)

@@ -38,9 +38,15 @@ save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimi
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_4_model.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_25_on_June_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_31_model.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_June_29/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_22_model.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_42_on_September_01/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_109_model.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_54_on_September_06/optimizer=SGD_Adam|batch_size=256|lr=0.005|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_103_model.pkl'
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_39_on_September_06/optimizer=SGD_Adam|batch_size=256|lr=0.005|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
 
-model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
-im_folder_path = f'generated_imshow_{model_name_short}'
+if True:
+    model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
+    im_folder_path = f'generated_imshow_{model_name_short}'
+else:
+    im_folder_path = 'generated_00_50_on_June_24_merged_7_22'
 
 if_load_unprocessed_conns = True
 if if_load_unprocessed_conns:
@@ -85,11 +91,20 @@ for i in [2, 6, 10]:
 proj_shortcut_aux_conns += [None] * 2
 
 df = pd.read_csv('list_attr_celeba.txt', sep='\s+', skiprows=1)
-attr_num = 40
-attr_names_dict = dict(zip(range(attr_num), df.columns.values))
+if True:
+    attr_num = 40
+    attr_names_dict = dict(zip(range(attr_num), df.columns.values))
+else:
+    attr_num = 20
+    cifar10_names = ['airplane', 'automobile', 'bird', 'cat', 'deer',
+                     'dog', 'frog', 'horse', 'ship', 'truck']
+    fashionmnist_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
+                          'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
+    attr_names_dict = dict(zip(range(attr_num), cifar10_names + fashionmnist_names))
 
-g = Digraph('G', filename='cluster.gv', node_attr={'shape': 'square',   'fontsize': '15', 'fontcolor' : 'white',
-                                                   'width': '.8', 'height': '.8',#'height': '.2',
+g = Digraph('G', filename='cluster.gv', node_attr={'shape': 'rectangle'#'square'
+                                                    ,'fontsize': '15', 'fontcolor' : 'white',
+                                                   'width': '1.0', 'height': '1.0',#'height': '.8', width was .8 too
                                                    'imagescale' : 'false',
                                                    'fixedsize':'true'
                                                    },
@@ -292,7 +307,7 @@ g.save('graph_cluster_binmatr.dot')
 for node_name in sorted(actually_good_nodes[last_layer_num]):
     node_ind = int(node_name[node_name.find('_') + 1:])
     cur_scales_out = learning_scales_binary[-1][:, node_ind]
-    print(node_name, node_ind, list(map(lambda x: celeba_dict[x], np.where(cur_scales_out)[0])))
+    print(node_name, node_ind, list(map(lambda x: attr_names_dict[x], np.where(cur_scales_out)[0])))
 
 learning_scales_binary_out = [np.zeros_like(cur) for cur in learning_scales_binary]
 auxillary_connectivities_for_id_shortcut_out = [np.zeros_like(cur) if cur is not None else None
@@ -332,7 +347,7 @@ output = {'connectivities': learning_scales_binary_out,
           'auxillary_connectivities_for_id_shortcut': auxillary_connectivities_for_id_shortcut_out}
 
 torch.save(output, 'visualized_connectivities.pkl')
-np.save('actually_good_nodes.npy', actually_good_nodes)
+np.save(f'actually_good_nodes_{model_name_short}.npy', actually_good_nodes)
 
 print('Potential danger: for projection shortcut connectivity is shared with conv1. Thus I enable it when either of those 2 connections exist')
 print("Or not. Suppose we have 2_16 -> 4_107. In the real network there'll also be 2_16 -> 3_107. If it had another incoming connections, "

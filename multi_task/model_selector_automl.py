@@ -63,6 +63,7 @@ def get_model(params):
                 if_enable_bias = params['if_enable_bias']
             aux_conns = None
             replace_constants_last_layer_mode = None
+            replace_with_avgs_last_layer_mode = None
 
             if 'input_size' not in params:
                 print('Warning! Setting input size to be default')
@@ -70,6 +71,9 @@ def get_model(params):
 
             if 'replace_constants_last_layer_mode' in params:
                 replace_constants_last_layer_mode = params['replace_constants_last_layer_mode']
+
+            if 'replace_with_avgs_last_layer_mode' in params:
+                replace_with_avgs_last_layer_mode = params['replace_with_avgs_last_layer_mode']
 
             if 'if_replace_useless_conns_with_bias' in params:
                 check_param_contradiction()
@@ -91,11 +95,19 @@ def get_model(params):
                     block_to_use = binmatr2_multi_faces_resnet.BasicBlockMock
                     aux_conns = params['auxillary_connectivities_for_id_shortcut']
 
+            if 'if_store_avg_activations_for_disabling' in params:
+                check_param_contradiction()
+                if not ('if_additives_user' in params):
+                    block_to_use = binmatr2_multi_faces_resnet.BasicBlockAvgAdditivesCreator
+                else:
+                    block_to_use = binmatr2_multi_faces_resnet.BasicBlockAvgAdditivesUser
+
             model['rep'] = binmatr2_multi_faces_resnet.BinMatrResNet(block_to_use,
                                                                      [2, 2, 2, 2], params['chunks'],
                                                                      width_mul, params['if_fully_connected'], False, 40,
                                                                      params['input_size'], aux_conns, if_enable_bias,
-                                                                     replace_constants_last_layer_mode)
+                                                                     replace_constants_last_layer_mode,
+                                                                     replace_with_avgs_last_layer_mode)
         if arc == 'binmatr_fullconv_resnet18':
             model['rep'] = binmatr_fullconv_multi_faces_resnet.BinMatrFullConvResNet(
                 binmatr_fullconv_multi_faces_resnet.BasicBlock, [2, 2, 2, 2], params['chunks'],
@@ -116,7 +128,8 @@ def get_model(params):
                 elif arc == 'binmatr_resnet18':
                     model[t] = binmatr_multi_faces_resnet.FaceAttributeDecoder()
                 elif arc == 'binmatr2_resnet18':
-                    model[t] = binmatr2_multi_faces_resnet.FaceAttributeDecoder()
+                    dim = params['chunks'][-1]
+                    model[t] = binmatr2_multi_faces_resnet.FaceAttributeDecoder(dim)
                 elif arc == 'binmatr_fullconv_resnet18':
                     model[t] = binmatr_fullconv_multi_faces_resnet.FaceAttributeFullConvDecoder(
                         model['rep'].connectivities[-1][int(t)].unsqueeze(0))
@@ -137,7 +150,11 @@ def get_model(params):
         model['rep'].to(device)
         for t in params['tasks']:
             if arc == 'binmatr2_resnet18':
-                model[t] = binmatr2_multi_faces_resnet.FaceAttributeDecoderCifar10()
+                if not data == 'cifar10_singletask':
+                    model[t] = binmatr2_multi_faces_resnet.FaceAttributeDecoderCifar10()
+                else:
+                    dim = params['chunks'][-1]
+                    model[t] = binmatr2_multi_faces_resnet.FaceAttributeDecoderCifar10SingleTask(dim)
             model[t].to(device)
 
         return model

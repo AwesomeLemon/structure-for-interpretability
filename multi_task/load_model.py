@@ -1,7 +1,5 @@
 import json
-import torch
-
-from torch.autograd import Variable
+from collections import defaultdict
 
 # import multi_task.datasets as datasets
 # import multi_task.metrics as metrics
@@ -9,9 +7,16 @@ from torch.autograd import Variable
 import datasets as datasets
 import metrics as metrics
 import model_selector_automl as model_selector_automl
-from util.util import celeba_dict
-import pandas
 import numpy as np
+import pandas
+import torch
+from torch.autograd import Variable
+from util.util import celeba_dict
+from matplotlib import pyplot as plt
+from util.util import proper_hist
+from util.util import get_relevant_labels_from_batch
+
+device = torch.device("cuda" if torch.cuda.is_available() and True else "cpu")
 
 
 def disable_conn(state, ind, src, dest):
@@ -21,8 +26,11 @@ def disable_conn(state, ind, src, dest):
 def load_trained_model(param_file, save_model_path, if_restore_connectivities=True,
                        if_visuzalization_conns=False, if_replace_useless_conns_with_bias=False,
                        if_enable_bias=False, if_replace_useless_conns_with_additives=False,
-                       if_additives_user=False, replace_constants_last_layer_mode=None):
-    assert not (if_replace_useless_conns_with_additives and if_replace_useless_conns_with_bias) #only 1 of those can be true
+                       if_additives_user=False, replace_constants_last_layer_mode=None,
+                       if_store_avg_activations_for_disabling=False, conns_to_remove_dict=None,
+                       replace_with_avgs_last_layer_mode=None):
+    assert not (if_replace_useless_conns_with_additives and if_replace_useless_conns_with_bias
+                and if_store_avg_activations_for_disabling)  # only 1 of those can be true
 
     with open(param_file) as json_params:
         params = json.load(json_params)
@@ -34,8 +42,8 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
         params['this_is_graph_visualization_run'] = 'Yep'
         if True:
             params['auxillary_connectivities_for_id_shortcut'] = list(
-                map(lambda x: torch.Tensor(x).cuda() if x is not None else None, auxillary_connectivities_for_id_shortcut)) \
-                                                             + [None, None, None]
+                map(lambda x: torch.Tensor(x).cuda() if x is not None else None,
+                    auxillary_connectivities_for_id_shortcut)) + [None, None, None]
         else:
             params['auxillary_connectivities_for_id_shortcut'] = [None] * 15
 
@@ -43,12 +51,15 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
         params['if_replace_useless_conns_with_bias'] = 'Yep'
     if if_replace_useless_conns_with_additives:
         params['if_replace_useless_conns_with_additives'] = 'Yep'
+    if if_store_avg_activations_for_disabling:
+        params['if_store_avg_activations_for_disabling'] = 'Yep'
     if if_additives_user:
         params['if_additives_user'] = 'Yep'
 
     if if_enable_bias:
         params['if_enable_bias'] = True
     params['replace_constants_last_layer_mode'] = replace_constants_last_layer_mode
+    params['replace_with_avgs_last_layer_mode'] = replace_with_avgs_last_layer_mode
 
     model = model_selector_automl.get_model(params)
 
@@ -84,41 +95,99 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
 
     if False:
         print('Some connections are disabled')
-    #black hair:
-        disable_conn(state, 1, 27, 50)
-        disable_conn(state, 1, 35, 50)
-        # state['connectivities'][2][28, 16] = 0
-        disable_conn(state, 2, 35, 76)
-        # disable_conn(state, 3, 76, 96)
-        disable_conn(state, 3, 101, 96)
-        disable_conn(state, 3, 113, 96)
-        disable_conn(state, 6, 29, 160)
-        # disable_conn(state, 6, 96, 160)
-        # state['connectivities'][6][248, 124] = 0
-        # state['connectivities'][7][106, 248] = 0
+        # black hair:
+        # the 2 below are the most important ones
         # disable_conn(state, 9, 142, 188)
-        # if True:
-        #     state['connectivities'][9][188, 216] = 0
-        # else:
-        #     state['connectivities'][8][216, 149] = 0
-        #     state['connectivities'][8][216, 0] = 0
-        #     state['connectivities'][8][216, 203] = 0
-        #     state['connectivities'][8][216, 106] = 0
-        #     state['connectivities'][8][216, 31] = 0
-        #     state['connectivities'][8][216, 25] = 0
-        disable_conn(state, 10, 188, 104)
-        disable_conn(state, 10, 86, 104)
-        # disable_conn(state, 10, 160, 104)
+        # disable_conn(state, 10, 86, 104)
 
-        state['connectivities'][14][8, :] = 0
-        # state['connectivities'][14][8, 383] = 1
-        # state['connectivities'][14][8, 172] = 1
-        state['connectivities'][14][8, 400] = 1
-    #brown hair:
-        # state['connectivities'][14][11, :] = 0
-        # state['connectivities'][14][11, 383] = 1
-    #blond hair:
-        # state['connectivities'][14][9, 356] = 0
+        # disable_conn(state, 1, 27, 50)
+        # disable_conn(state, 1, 35, 50)
+        # # state['connectivities'][2][28, 16] = 0
+        # disable_conn(state, 2, 35, 76)
+        # disable_conn(state, 3, 76, 96)
+        # disable_conn(state, 3, 101, 96)
+        # disable_conn(state, 3, 113, 96)
+        # disable_conn(state, 6, 29, 160)
+        # the one below by itself makes p(black_hair)=1 before&after
+        # disable_conn(state, 6, 96, 160)
+        # # state['connectivities'][6][248, 124] = 0
+        # disable_conn(state, 7, 82, 53)
+        # # state['connectivities'][7][106, 248] = 0
+        # # if True:
+        # #     state['connectivities'][9][188, 216] = 0
+        # # else:
+        # #     state['connectivities'][8][216, 149] = 0
+        # #     state['connectivities'][8][216, 0] = 0
+        # #     state['connectivities'][8][216, 203] = 0
+        # #     state['connectivities'][8][216, 106] = 0
+        # #     state['connectivities'][8][216, 31] = 0
+        # #     state['connectivities'][8][216, 25] = 0
+
+        if False:
+            if False:
+                disable_conn(state, 8, 23, 224)
+            else:
+                # disable_conn(state, 7, 241, 23)
+                disable_conn(state, 7, 86, 23)
+
+            if False:
+                disable_conn(state, 9, 174, 86)
+            else:
+                disable_conn(state, 8, 149, 174)
+
+        # disable_conn(state, 9, 187, 86)
+        # state['connectivities'][8][86, :] = 0
+        # state['connectivities'][9][86, :] = 0
+        # state['connectivities'][9][86, 224] = 1
+        '''
+        1
+        disabling 188->104: same mediocre drop in pb & pa
+        disabling 160->104 or 86->104: huge drop; equal p(black) in pb & pa
+        '''
+        # disable_conn(state, 10, 188, 104)
+        # disable_conn(state, 10, 160, 104)
+        # disable_conn(state, 10, 86, 104)
+
+        # disable_conn(state, 9, 174, 86)
+        # disable_conn(state, 9, 187, 86)
+        # disable_conn(state, 9, 224, 86)
+
+        # disable_conn(state, 13, 497, 172)
+        #
+        # state['connectivities'][14][8, :] = 0
+        # state['connectivities'][14][8, 383] = 0
+        # state['connectivities'][14][8, 172] = 0
+        # state['connectivities'][14][8, 400] = 1
+
+        # disable_conn(state, 14, 134, 9)
+        # disable_conn(state, 14, 400, 9)
+        # disable_conn(state, 14, 383, 9)
+
+        # disable_conn(state, 10, 181, 279)
+        # disable_conn(state, 10, 73, 279)
+        # disable_conn(state, 10, 191, 279)
+
+        disable_conn(state, 12, 406, 204)
+    # brown hair:
+    # state['connectivities'][14][11, :] = 0
+    # state['connectivities'][14][11, 383] = 1
+    # blond hair:
+    # # print(torch.where(state['connectivities'][7][83, :] > 0.5))
+    # disable_conn(state, 1, 47, 37)
+    # # disable_conn(state, 6, 42, 57)
+    # # disable_conn(state, 6, 57, 57)
+    # # disable_conn(state, 6, 105, 57)
+    # disable_conn(state, 7, 195, 83)
+    # # disable_conn(state, 7, 57, 83)
+    # disable_conn(state, 10, 181, 490)
+    # disable_conn(state, 11, 279, 123)
+    # # disable_conn(state, 14, 123, 9)
+    # # disable_conn(state, 14, 126, 9)
+    # # disable_conn(state, 14, 187, 9)
+    # # disable_conn(state, 14, 204, 9)
+    # # disable_conn(state, 14, 356, 9)
+    # state['connectivities'][14][9, :] = 0
+    # state['connectivities'][14][9, 123] = 1
 
     if hasattr(model['rep'], 'connectivities') and if_restore_connectivities:
         # print('ACHTUNG! Trying out restoring connectivities')
@@ -174,7 +243,16 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
     if if_replace_useless_conns_with_additives:
         if 'additives' in state:
             model['rep'].block[0].additives_dict = state['additives']
+    if if_store_avg_activations_for_disabling:
+        if if_additives_user:
+            model['rep'].block[0].additives_dict = state['additives']
+            if conns_to_remove_dict is None:
+                raise ValueError('conns_to_remove_dict not initialized')
+            model['rep'].block[0].connections_to_remove = conns_to_remove_dict
+
     if replace_constants_last_layer_mode == 'restore':
+        model['rep'].last_layer_additives = state['last_layer_additives']
+    if replace_with_avgs_last_layer_mode == 'restore':
         model['rep'].last_layer_additives = state['last_layer_additives']
     for t in tasks:
         key_name = 'model_{}'.format(t)
@@ -187,13 +265,25 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
     # model['12'].linear.weight[:, 148] = torch.tensor([-0.06, 0.05#-0.8863,  0.8848
     #                                                   ]).cuda()
     # model['12'].linear.bias.data = torch.tensor([ 0.0676, -0.0725]).cuda() # first number is no, second number is yes.
-        # I.e. if first is 1000 we get 0 predictions, and when second is -1000 we get 0 predictions
+    # I.e. if first is 1000 we get 0 predictions, and when second is -1000 we get 0 predictions
+
+    #model['21'].linear.weight[:, [295, 356, 363, 481, 126, 23]]
+    #model['8'].linear.weight[:, [172, 400, 383]]
+    #model['38'].linear.weight[:, [250, 503, 56, 103, 97, 204]]
+    #x = model['1'].linear.weight[:, 6].cpu().detach() ; x[1] - x[0]
+    for m in model:
+        model[m].to(device)
+
     return model
 
-def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_path=None):
+
+def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_path=None, loader=None):
     with open(param_file) as json_params:
         params = json.load(json_params)
 
+    params['metric_type'] = 'ACC_BLNCD'
+    if 'input_size' not in params:
+        params['input_size'] = 'default'
     if params['input_size'] == 'default':
         config_path = 'configs.json'
     elif params['input_size'] == 'bigimg':
@@ -206,16 +296,20 @@ def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_pa
 
     metric = metrics.get_metrics(params)
 
-    if not if_store_val_pred:
-        tst_loader = datasets.get_test_dataset(params, configs)
-        loader = tst_loader
-    else:
-        _, val_loader, _ = datasets.get_dataset(params, configs)
-        loader = val_loader
-        preds = [[] for _ in range(40)]
-        model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
+    if loader is None:
+        if not if_store_val_pred:
+            tst_loader = datasets.get_test_dataset(params, configs)
+            loader = tst_loader
+        else:
+            _, val_loader, _ = datasets.get_dataset(params, configs)
+            loader = val_loader
+            preds = [[] for _ in range(40)]
+            model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
 
-    tasks = params['tasks']
+    if True:
+        tasks = params['tasks']
+    else:
+        tasks = [str(x) for x in range(40) if x != 12]
     all_tasks = configs[params['dataset']]['all_tasks']
     for m in model:
         model[m].eval()
@@ -230,31 +324,23 @@ def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_pa
             if i % 10 == 0:
                 print(i)
 
-            def get_relevant_labels_from_batch(batch):
-                labels = {}
-                # Read all targets of all tasks
-                for i, t in enumerate(all_tasks):
-                    if t not in tasks:
-                        continue
-                    if params['dataset'] == 'cifar10':
-                        labels[t] = (batch[1] == int(t)).type(torch.LongTensor)
-                    elif params['dataset'] == 'cifarfashionmnist':
-                        labels[t] = (batch[1] == int(t)).type(torch.LongTensor)
-                    else:
-                        labels[t] = batch[i + 1]
-                    labels[t] = labels[t].cuda()
-                return labels
-
             val_images = Variable(batch_val[0].cuda())
-            labels_val = get_relevant_labels_from_batch(batch_val)
+            labels_val = get_relevant_labels_from_batch(batch_val, all_tasks, tasks, params, device)
 
             # val_reps, _ = model['rep'](val_images, None)
             val_reps = model['rep'](val_images)
-            for i, t in enumerate(tasks):
+            # for j, t in enumerate(tasks):
+            for t in tasks:
+                j = int(t)
+                '''
+                problem: suppose I trained 40 tasks, but wanna evaulate only 39. Then enumerate breaks stuff
+                problem: suppose I traned some arbitrary tasks (e.g. [31, 36]). Then int() breaks stuff
+                Choose your poison carefully.
+                '''
                 if if_train_default_resnet:
                     val_rep = val_reps
                 else:
-                    val_rep = val_reps[i]
+                    val_rep = val_reps[j]
                 out_t_val, _ = model[t](val_rep, None)
                 # loss_t = loss_fn[t](out_t_val, labels_val[t])
                 # tot_loss['all'] += loss_t.item()
@@ -263,7 +349,7 @@ def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_pa
                 if if_store_val_pred:
                     labels = out_t_val.data.max(1, keepdim=True)[1]
                     temp = list(labels.detach().cpu().numpy().squeeze())
-                    preds[i] += temp
+                    preds[j] += temp
                 # print(out_t_val)
                 # print(labels_val[t])
                 # print(metric[t].get_result())
@@ -271,20 +357,23 @@ def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_pa
         preds = np.array(preds).T
         preds[preds == 0] = -1
         print(preds.shape)
-        df = pandas.DataFrame({name:preds[:, i] for i, name in enumerate(celeba_dict.values())})
+        df = pandas.DataFrame({name: preds[:, i] for i, name in enumerate(celeba_dict.values())})
         df.to_csv(f'predicted_labels_celeba_{model_name_short}.csv', sep=' ')
-    error_sum = 0
+
+    error_sums = defaultdict(lambda: 0)
     for t in tasks:
         metric_results = metric[t].get_result()
 
         for metric_key in metric_results:
             print(f'({t}) {celeba_dict[int(t)]}\t acc = {metric_results[metric_key]}'.expandtabs(30))
-            error_sum += 1 - metric_results[metric_key]
+            error_sums[metric_key] += 1 - metric_results[metric_key]
 
         metric[t].reset()
 
-    error_sum /= float(len(tasks))
-    print(error_sum * 100)
+    for metric_key in metric_results:
+        error_sum = error_sums[metric_key]
+        error_sum /= float(len(tasks))
+        print('error', metric_key, error_sum * 100)
 
 
 def convert_useless_connections_to_biases(param_file, save_model_path):
@@ -302,14 +391,15 @@ def convert_useless_connections_to_biases(param_file, save_model_path):
     new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_biased' + '.pkl'
     torch.save(state, new_save_model_path)
 
+
 def convert_useless_connections_to_additives(param_file, save_model_path):
     model = load_trained_model(param_file, save_model_path, True, False, False, False, True, False, 'store')
     eval_trained_model(param_file, model)
 
     state = {'model_rep': model['rep'].state_dict(),
              'connectivities': model['rep'].connectivities,
-             'additives':model['rep'].block[0].additives_dict,
-             'last_layer_additives':model['rep'].last_layer_additives}
+             'additives': model['rep'].block[0].additives_dict,
+             'last_layer_additives': model['rep'].last_layer_additives}
     with open(param_file) as json_params:
         params = json.load(json_params)
     tasks = params['tasks']
@@ -319,14 +409,62 @@ def convert_useless_connections_to_additives(param_file, save_model_path):
     new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_additives' + '.pkl'
     torch.save(state, new_save_model_path)
 
-def test_biased_net(param_file, save_model_path, config_name):
+
+def test_biased_net(param_file, save_model_path):
     new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_biased' + '.pkl'
     model = load_trained_model(param_file, new_save_model_path, True, True, False, True)
     eval_trained_model(param_file, model)
 
-def test_additives_net(param_file, save_model_path, config_name):
+
+def test_additives_net(param_file, save_model_path):
     new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_additives' + '.pkl'
     model = load_trained_model(param_file, new_save_model_path, True, True, False, False, True, True, 'restore')
+    eval_trained_model(param_file, model)
+
+
+def store_averaged_activations_for_disabling(param_file, save_model_path):
+    with open(param_file) as json_params:
+        params = json.load(json_params)
+    if params['input_size'] == 'default':
+        config_path = 'configs.json'
+    elif params['input_size'] == 'bigimg':
+        config_path = 'configs_big_img.json'
+    elif params['input_size'] == 'biggerimg':
+        config_path = 'configs_bigger_img.json'
+    with open(config_path) as config_params:
+        configs = json.load(config_params)
+
+    model = load_trained_model(param_file, save_model_path, True, if_store_avg_activations_for_disabling=True,
+                               replace_with_avgs_last_layer_mode='store')
+    loader = datasets.get_random_val_subset(params, configs)
+    eval_trained_model(param_file, model, loader=loader)
+
+    state = {'model_rep': model['rep'].state_dict(),
+             'connectivities': model['rep'].connectivities,
+             'connectivity_comeback_multipliers': model['rep'].connectivity_comeback_multipliers,
+             'additives': model['rep'].block[0].additives_dict,
+             'last_layer_additives': model['rep'].last_layer_additives}
+
+    tasks = params['tasks']
+    for t in tasks:
+        key_name = 'model_{}'.format(t)
+        state[key_name] = model[t].state_dict()
+    new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_avgadditives' + '.pkl'
+    torch.save(state, new_save_model_path)
+
+
+def test_averagedadditives_net(param_file, save_model_path):
+    new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_avgadditives' + '.pkl'
+    removed_conns = defaultdict(list)
+    removed_conns['shortcut'] = defaultdict(list)
+    # removed_conns[10] = [(86, 104)]
+    # removed_conns['label'] = [(172, 8), (400, 8), (383, 8)]
+    # removed_conns['shortcut'][2] = [(23, 102)]
+    removed_conns['shortcut'][10] = [(212, 383)]
+    # removed_conns['shortcut'][12] = [(383, 383)]
+    model = load_trained_model(param_file, new_save_model_path, True, if_additives_user=True,
+                               if_store_avg_activations_for_disabling=True, replace_with_avgs_last_layer_mode='restore'
+                               , conns_to_remove_dict=removed_conns)
     eval_trained_model(param_file, model)
 
 
@@ -355,12 +493,18 @@ if __name__ == '__main__':
     # param_file = 'params/binmatr2_cifar.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_05_on_April_25/optimizer=SGD_Adam|batch_size=96|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|if__16_model.pkl'
     # param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4_bigimg.json'
+
+    # THE TWO MODELS BELOW ARE MY REFERNCES AS "BIG" & "BIGGER" MODELS
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_25_on_April_30/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|connectivities_l1_all=False|if__23_model.pkl'
+    # param_file = 'params/binmatr2_16_16_4_sgdadam0004_pretrain_fc_bigimg.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_06_on_April_26/optimizer=SGD_Adam|batch_size=52|lr=0.002|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|_27_model.pkl'
     # param_file = 'params/binmatr2_16_16_4_sgdadam0002_pretrain_condecaytask1e-4_biggerimg.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_42_on_April_17/optimizer=SGD|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=True|use_pretrained_17_model.pkl'
     # param_file = 'params/binmatr2_8_8_8_sgd001_pretrain_fc.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_37_on_May_15/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_128|_128|_256|_256|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=2e-06|co_100_model.pkl'
     # param_file = 'params/binmatr2_64_64_128_128_256_256_512_512_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_15_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_53_on_May_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_49_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_35_on_May_20/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
@@ -393,6 +537,14 @@ if __name__ == '__main__':
     # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_nocomeback_rescaled2.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_23_on_July_01/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_10_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_comeback_rescaled2.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/15_01_on_August_10/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_11_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc_baldonly.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_04_on_August_10/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_13_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled_weightedce.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_09_on_August_12/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_weightedce.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_00_on_August_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0003|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_61_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001+0003_pretrain_bias_condecayall2e-6_comeback_preciserescaled_rescaled2.json'
 
     # config_name = 'configs.json'
     # config_name = 'configs_big_img.json'
@@ -400,8 +552,19 @@ if __name__ == '__main__':
     if False:
         # convert_useless_connections_to_biases(param_file, save_model_path, config_name)
         # test_biased_net(param_file, save_model_path, config_name)
-        convert_useless_connections_to_additives(param_file, save_model_path)
+        # convert_useless_connections_to_additives(param_file, save_model_path)
         # test_additives_net(param_file, save_model_path)
+        # store_averaged_activations_for_disabling(param_file, save_model_path)
+        test_averagedadditives_net(param_file, save_model_path)
     else:
-        model = load_trained_model(param_file, save_model_path, if_restore_connectivities=True)
-        eval_trained_model(param_file, model, True, save_model_path)
+        # save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_avgadditives' + '.pkl'
+        # removed_conns = defaultdict(list)
+        # if False:
+        #     print('Some connections were disabled')
+        #     removed_conns[10] = [(188, 104),
+        #                          (86, 104)]
+        # trained_model = load_trained_model(param_file, save_model_path, if_additives_user=True,
+        #                                    if_store_avg_activations_for_disabling=True,
+        #                                    conns_to_remove_dict=removed_conns)
+        trained_model = load_trained_model(param_file, save_model_path)
+        eval_trained_model(param_file, trained_model, False, save_model_path)
