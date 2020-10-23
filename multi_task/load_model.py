@@ -10,11 +10,13 @@ import model_selector_automl as model_selector_automl
 import numpy as np
 import pandas
 import torch
+import torchvision
 from torch.autograd import Variable
 from util.util import celeba_dict
 from matplotlib import pyplot as plt
 from util.util import proper_hist
 from util.util import get_relevant_labels_from_batch
+import scipy.stats
 
 device = torch.device("cuda" if torch.cuda.is_available() and True else "cpu")
 
@@ -28,7 +30,8 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
                        if_enable_bias=False, if_replace_useless_conns_with_additives=False,
                        if_additives_user=False, replace_constants_last_layer_mode=None,
                        if_store_avg_activations_for_disabling=False, conns_to_remove_dict=None,
-                       replace_with_avgs_last_layer_mode=None):
+                       replace_with_avgs_last_layer_mode=None, if_actively_disable_bias=False):
+    # if_actively_disable_bias is needed because some cifar networks ignored the enable_bias parameter
     assert not (if_replace_useless_conns_with_additives and if_replace_useless_conns_with_bias
                 and if_store_avg_activations_for_disabling)  # only 1 of those can be true
 
@@ -58,6 +61,9 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
 
     if if_enable_bias:
         params['if_enable_bias'] = True
+    if if_actively_disable_bias:
+        params['if_enable_bias'] = False
+
     params['replace_constants_last_layer_mode'] = replace_constants_last_layer_mode
     params['replace_with_avgs_last_layer_mode'] = replace_with_avgs_last_layer_mode
 
@@ -167,7 +173,8 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
         # disable_conn(state, 10, 73, 279)
         # disable_conn(state, 10, 191, 279)
 
-        disable_conn(state, 12, 406, 204)
+        # disable_conn(state, 12, 406, 204)
+        disable_conn(state, 10, 193, 125)
     # brown hair:
     # state['connectivities'][14][11, :] = 0
     # state['connectivities'][14][11, 383] = 1
@@ -271,17 +278,32 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
     #model['8'].linear.weight[:, [172, 400, 383]]
     #model['38'].linear.weight[:, [250, 503, 56, 103, 97, 204]]
     #x = model['1'].linear.weight[:, 6].cpu().detach() ; x[1] - x[0]
+    #x = np.array([.24, -.07, -.1, -.09, -.11, -.12, -.08, -.06, .24, .13])
+    #y = model['all'].linear.weight[:, 508].cpu().detach().numpy()
+    #np.corrcoef(x, y), scipy.stats.spearmanr(x, y)
+    '''
+    w = model['all'].linear.weight.cpu().detach().numpy()
+    wasser_dists = np.load('wasser_dist_attr_hist_bettercifar10single_14.npy', allow_pickle=True).item()
+    corrs = []
+    for neuron in range(512):
+        w_cur = w[:, neuron]
+        dist_cur = np.array(list(wasser_dists[neuron].values()))
+        corrs.append(np.corrcoef(w_cur, dist_cur)[0, 1]) #scipy.stats.spearmanr(w_cur, dist_cur)[0]
+    '''
     for m in model:
         model[m].to(device)
 
     return model
 
 
-def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_path=None, loader=None):
+def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_path=None, loader=None,
+                       if_stop_after_single_batch=False, batch_size=None, if_print=True, if_pretrained_imagenet=False):
     with open(param_file) as json_params:
         params = json.load(json_params)
 
     params['metric_type'] = 'ACC_BLNCD'
+    if batch_size is not None:
+        params['batch_size'] = batch_size
     if 'input_size' not in params:
         params['input_size'] = 'default'
     if params['input_size'] == 'default':
@@ -290,6 +312,16 @@ def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_pa
         config_path = 'configs_big_img.json'
     elif params['input_size'] == 'biggerimg':
         config_path = 'configs_bigger_img.json'
+
+    if if_pretrained_imagenet:
+        params['dataset'] = 'imagenet_val'
+        params['batch_size'] = 256 * 2
+        params['tasks'] = ['all']
+        params['metric_type'] = 'ACC'
+        model = torch.nn.DataParallel(model)
+        m_tmp = {} # model should be a dict
+        m_tmp['rep'] = model
+        model = m_tmp
 
     with open(config_path) as config_params:
         configs = json.load(config_params)
@@ -310,7 +342,12 @@ def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_pa
         tasks = params['tasks']
     else:
         tasks = [str(x) for x in range(40) if x != 12]
-    all_tasks = configs[params['dataset']]['all_tasks']
+
+    if if_pretrained_imagenet:
+        all_tasks = ['all']
+    else:
+        all_tasks = configs[params['dataset']]['all_tasks']
+
     for m in model:
         model[m].eval()
 
@@ -322,26 +359,31 @@ def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_pa
         # model['rep'].connectivities[1] *= 0
         for i, batch_val in enumerate(loader):
             if i % 10 == 0:
-                print(i)
+                if if_print:
+                    print(i)
+            if if_stop_after_single_batch and (i == 1):
+                break
 
-            val_images = Variable(batch_val[0].cuda())
+            val_images = batch_val[0].cuda()
             labels_val = get_relevant_labels_from_batch(batch_val, all_tasks, tasks, params, device)
 
             # val_reps, _ = model['rep'](val_images, None)
             val_reps = model['rep'](val_images)
             # for j, t in enumerate(tasks):
             for t in tasks:
-                j = int(t)
-                '''
-                problem: suppose I trained 40 tasks, but wanna evaulate only 39. Then enumerate breaks stuff
-                problem: suppose I traned some arbitrary tasks (e.g. [31, 36]). Then int() breaks stuff
-                Choose your poison carefully.
-                '''
-                if if_train_default_resnet:
-                    val_rep = val_reps
+                try:
+                    j = int(t)
+                except: # assume single-task cifar
+                    j = 0
+                    # print('j = 0')
+                '''problem: suppose I trained 40 tasks, but wanna evaulate only 39. Then enumerate breaks stuff
+                problem: suppose I trained some arbitrary tasks (e.g. [31, 36]). Then int() breaks stuff
+                Choose your poison carefully.'''
+                val_rep = val_reps if if_train_default_resnet or if_pretrained_imagenet else val_reps[j]
+                if not if_pretrained_imagenet:
+                    out_t_val, _ = model[t](val_rep, None)
                 else:
-                    val_rep = val_reps[j]
-                out_t_val, _ = model[t](val_rep, None)
+                    out_t_val = val_reps
                 # loss_t = loss_fn[t](out_t_val, labels_val[t])
                 # tot_loss['all'] += loss_t.item()
                 # tot_loss[t] += loss_t.item()
@@ -356,7 +398,8 @@ def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_pa
     if if_store_val_pred:
         preds = np.array(preds).T
         preds[preds == 0] = -1
-        print(preds.shape)
+        if if_print:
+            print(preds.shape)
         df = pandas.DataFrame({name: preds[:, i] for i, name in enumerate(celeba_dict.values())})
         df.to_csv(f'predicted_labels_celeba_{model_name_short}.csv', sep=' ')
 
@@ -365,7 +408,13 @@ def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_pa
         metric_results = metric[t].get_result()
 
         for metric_key in metric_results:
-            print(f'({t}) {celeba_dict[int(t)]}\t acc = {metric_results[metric_key]}'.expandtabs(30))
+            try:
+                name = celeba_dict[int(t)]
+            except:
+                # assume single-head cifar
+                name = t
+            if if_print:
+                print(f'({t}) {name}\t acc = {metric_results[metric_key]}'.expandtabs(30))
             error_sums[metric_key] += 1 - metric_results[metric_key]
 
         metric[t].reset()
@@ -373,8 +422,11 @@ def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_pa
     for metric_key in metric_results:
         error_sum = error_sums[metric_key]
         error_sum /= float(len(tasks))
-        print('error', metric_key, error_sum * 100)
+        last_error = error_sum
+        if if_print:
+            print('error', metric_key, error_sum * 100)
 
+    return last_error, loader
 
 def convert_useless_connections_to_biases(param_file, save_model_path):
     model = load_trained_model(param_file, save_model_path, True, False, True)
@@ -422,7 +474,7 @@ def test_additives_net(param_file, save_model_path):
     eval_trained_model(param_file, model)
 
 
-def store_averaged_activations_for_disabling(param_file, save_model_path):
+def store_averaged_activations_for_disabling(param_file, save_model_path, if_actively_disable_bias):
     with open(param_file) as json_params:
         params = json.load(json_params)
     if params['input_size'] == 'default':
@@ -435,9 +487,13 @@ def store_averaged_activations_for_disabling(param_file, save_model_path):
         configs = json.load(config_params)
 
     model = load_trained_model(param_file, save_model_path, True, if_store_avg_activations_for_disabling=True,
-                               replace_with_avgs_last_layer_mode='store')
+                               replace_with_avgs_last_layer_mode='store', if_actively_disable_bias=if_actively_disable_bias)
+    if True:
+        params['batch_size'] = 1200
     loader = datasets.get_random_val_subset(params, configs)
-    eval_trained_model(param_file, model, loader=loader)
+    if loader is None:
+        _, loader, _ = datasets.get_dataset(params, configs)
+    eval_trained_model(param_file, model, loader=loader, if_stop_after_single_batch=True)
 
     state = {'model_rep': model['rep'].state_dict(),
              'connectivities': model['rep'].connectivities,
@@ -453,18 +509,18 @@ def store_averaged_activations_for_disabling(param_file, save_model_path):
     torch.save(state, new_save_model_path)
 
 
-def test_averagedadditives_net(param_file, save_model_path):
+def test_averagedadditives_net(param_file, save_model_path, if_actively_disable_bias):
     new_save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_avgadditives' + '.pkl'
     removed_conns = defaultdict(list)
     removed_conns['shortcut'] = defaultdict(list)
     # removed_conns[10] = [(86, 104)]
     # removed_conns['label'] = [(172, 8), (400, 8), (383, 8)]
     # removed_conns['shortcut'][2] = [(23, 102)]
-    removed_conns['shortcut'][10] = [(212, 383)]
+    # removed_conns['shortcut'][10] = [(212, 383)]
     # removed_conns['shortcut'][12] = [(383, 383)]
     model = load_trained_model(param_file, new_save_model_path, True, if_additives_user=True,
                                if_store_avg_activations_for_disabling=True, replace_with_avgs_last_layer_mode='restore'
-                               , conns_to_remove_dict=removed_conns)
+                               , conns_to_remove_dict=removed_conns, if_actively_disable_bias=if_actively_disable_bias)
     eval_trained_model(param_file, model)
 
 
@@ -523,8 +579,8 @@ if __name__ == '__main__':
     # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_rescaled.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_50_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled.json'
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
-    param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled2.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled2.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_43_on_June_24/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_rescaled3_bigimg.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_25_on_June_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_31_model.pkl'
@@ -545,17 +601,37 @@ if __name__ == '__main__':
     # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_weightedce.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_00_on_August_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0003|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_61_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam001+0003_pretrain_bias_condecayall2e-6_comeback_preciserescaled_rescaled2.json'
+    #   single-head cifar
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_28_on_September_21/optimizer=SGD_Adam|batch_size=128|lr=0.1|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_145_model.pkl'
+    # param_file = 'params/binmatr2_cifar_sgdadam1+001bias_batch128_weightdecay1e-4_condecayall2e-6_inc_singletask.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_58_on_October_02/optimizer=SGD|batch_size=128|lr=0.001|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0_240_model.pkl'
+    # param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
 
     # config_name = 'configs.json'
     # config_name = 'configs_big_img.json'
     # config_name = 'configs_bigger_img.json'
-    if False:
+    if True:
+        trained_model = torchvision.models.__dict__['resnet18'](pretrained=True).cuda()
+        eval_trained_model(param_file, trained_model, if_pretrained_imagenet=True)
+        exit()
+
+        #figure out whether need to actively disable bias due to cifar networks that ignored the enable_bias parameter
+        if_actively_disable_bias=False
+        try:
+            trained_model = load_trained_model(param_file, save_model_path)
+        except:
+            print('assume problem where cifar networks ignored the enable_bias parameter')
+            if_actively_disable_bias = True
+            trained_model = load_trained_model(param_file, save_model_path, if_actively_disable_bias=if_actively_disable_bias)
+        eval_trained_model(param_file, trained_model)
         # convert_useless_connections_to_biases(param_file, save_model_path, config_name)
         # test_biased_net(param_file, save_model_path, config_name)
         # convert_useless_connections_to_additives(param_file, save_model_path)
         # test_additives_net(param_file, save_model_path)
-        # store_averaged_activations_for_disabling(param_file, save_model_path)
-        test_averagedadditives_net(param_file, save_model_path)
+        # store_averaged_activations_for_disabling(param_file, save_model_path, if_actively_disable_bias)
+        # test_averagedadditives_net(param_file, save_model_path, if_actively_disable_bias)
     else:
         # save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_avgadditives' + '.pkl'
         # removed_conns = defaultdict(list)
@@ -566,5 +642,26 @@ if __name__ == '__main__':
         # trained_model = load_trained_model(param_file, save_model_path, if_additives_user=True,
         #                                    if_store_avg_activations_for_disabling=True,
         #                                    conns_to_remove_dict=removed_conns)
-        trained_model = load_trained_model(param_file, save_model_path)
-        eval_trained_model(param_file, trained_model, False, save_model_path)
+        if False:
+            trained_model = load_trained_model(param_file, save_model_path)
+            eval_trained_model(param_file, trained_model, False, save_model_path)
+        else:
+            trained_model = load_trained_model(param_file, save_model_path)
+            with open(param_file) as json_params:
+                params = json.load(json_params)
+            if 'input_size' not in params:
+                params['input_size'] = 'default'
+            if params['input_size'] == 'default':
+                im_size = (64, 64)
+                config_path = 'configs.json'
+            elif params['input_size'] == 'bigimg':
+                im_size = (128, 128)
+                config_path = 'configs_big_img.json'
+            elif params['input_size'] == 'biggerimg':
+                im_size = (192, 168)
+                config_path = 'configs_bigger_img.json'
+            with open(config_path) as config_params:
+                configs = json.load(config_params)
+            _, loader, _ = datasets.get_dataset(params, configs)
+            eval_trained_model(param_file, trained_model, loader=loader)
+

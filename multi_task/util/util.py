@@ -18,6 +18,7 @@ from scipy.ndimage.interpolation import shift
 import shutil
 from matplotlib import pyplot as plt
 from fuzzywuzzy import process
+import pandas as pd
 
 celeba_dict = {0: '5_o_Clock_Shadow', 1: 'Arched_Eyebrows', 2: 'Attractive', 3: 'Bags_Under_Eyes', 4: 'Bald',
                5: 'Bangs', 6: 'Big_Lips', 7: 'Big_Nose', 8: 'Black_Hair', 9: 'Blond_Hair', 10: 'Blurry',
@@ -57,12 +58,35 @@ layers_bn = ['layer1_0',
              'layer4_1_bn1', 'layer4_1',
              ]
 
+layers_bn_prerelu = ['layer1_0_relu2',
+             'layer1_1_bn1', 'layer1_1_relu2',
+             'layer2_0_bn1', 'layer2_0_relu2',
+             'layer2_1_bn1', 'layer2_1_relu2',
+             'layer3_0_bn1', 'layer3_0_relu2',
+             'layer3_1_bn1', 'layer3_1_relu2',
+             'layer4_0_bn1', 'layer4_0_relu2',
+             'layer4_1_bn1', 'layer4_1_relu2',
+             ]
+
+layers_bn_afterrelu = ['layer1_0',
+             'layer1_1_relu1', 'layer1_1',
+             'layer2_0_relu1', 'layer2_0',
+             'layer2_1_relu1', 'layer2_1',
+             'layer3_0_relu1', 'layer3_0',
+             'layer3_1_relu1', 'layer3_1',
+             'layer4_0_relu1', 'layer4_0',
+             'layer4_1_relu1', 'layer4_1',
+             ]
+
 cifar10_names = ['airplane', 'automobile', 'bird', 'cat', 'deer',
                  'dog', 'frog', 'horse', 'ship', 'truck']
 fashionmnist_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
                       'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
+imagenettte_names = ['tench', 'English springer', 'cassette player',
+                     'chain saw', 'church', 'French horn', 'garbage truck', 'gas pump', 'golf ball', 'parachute']
 cifarfashion_dict = dict(zip(range(20), cifar10_names + fashionmnist_names))
 cifar10_dict = dict(zip(range(10), cifar10_names))
+imagenette_dict = dict(zip(range(10), imagenettte_names))
 
 def pad_to_correct_shape(img, width, height):
     # return skimage.transform.resize(img, (width, width), order=3)
@@ -230,7 +254,7 @@ def save_image_batch(im_batch, path):
     im_total = len(im_batch)
     rows_num = 2
     cols_num = int(math.ceil(im_total / rows_num))
-    ax = fig.subplots(nrows=rows_num, ncols=cols_num)
+    ax = fig.subplots(nrows=rows_num, ncols=cols_num, squeeze=False)
     plt.tight_layout()
 
     for i in range(len(im_batch)):
@@ -297,8 +321,8 @@ def images_list_to_grid_image(ims):
 
 
 def proper_hist(data, title='', ax=None, xlim_left=None, xlim_right=None, bin_size=0.1, alpha=1, density=None):
-    bins = math.ceil((data.max() - data.min()) / bin_size)
-    if data.max() - data.min() == 0:
+    bins = math.ceil((np.max(data) - np.min(data)) / bin_size)
+    if np.max(data) - np.min(data) == 0:
         bins = None
     if ax is None:
         plt.hist(data, bins, alpha=alpha, density=density)
@@ -310,14 +334,22 @@ def proper_hist(data, title='', ax=None, xlim_left=None, xlim_right=None, bin_si
         ax.set_title(title)
 
 
-def recreate_image_cifarfashionmnist_batch(img):
+def recreate_image_nonceleba_batch(img, dataset_type='cifar'):
+    if dataset_type == 'cifar':
+        means = np.array([0.4914, 0.4822, 0.4465]) * 255
+        std = [0.2023, 0.1994, 0.2010]
+    elif dataset_type == 'imagenette':
+        means = np.array([109.5388, 118.6897, 124.6901])
+        std = [0.224, 0.224, 0.224]
+    elif dataset_type == 'imagenet_val':
+        means = np.array([0.485, 0.456, 0.406]) * 255
+        std = [0.229, 0.224, 0.225]
+    else:
+        raise NotImplementedError()
     img = img.cpu().data.numpy()
     recreated_ims = []
     for i in range(img.shape[0]):
         recreated_im = np.copy(img[i])
-
-        means = np.array([0.4914, 0.4822, 0.4465]) * 255
-        std = [0.2023, 0.1994, 0.2010]
 
         # CHW -> HWC
         recreated_im = recreated_im.transpose((1, 2, 0))
@@ -335,8 +367,9 @@ def recreate_image_cifarfashionmnist_batch(img):
         recreated_im = np.round(recreated_im)
         recreated_im = np.uint8(recreated_im)
 
-        # BGR to RGB:
-        recreated_im = recreated_im[:, :, [2, 1, 0]]
+        if dataset_type != 'imagenette':
+            # BGR to RGB:
+            recreated_im = recreated_im[:, :, [2, 1, 0]]
 
         recreated_ims.append(recreated_im)
     return recreated_ims
@@ -361,6 +394,9 @@ def get_relevant_labels_from_batch(batch, all_tasks, tasks, params, device):
 
 
 def store_path_to_label_dict(loader, store_path):
+    '''
+    Note that despite general name, this'll work only for my celeba loader
+    '''
     path_to_label_dict = {}
     for batch in loader:
         paths = batch[-1]
@@ -369,3 +405,49 @@ def store_path_to_label_dict(loader, store_path):
             path_to_label_dict[path] = labels[:, i]
 
     np.save(store_path, path_to_label_dict, allow_pickle=True)
+
+
+def store_path_and_label_df_broden(loader, store_path):
+    max_class = 1197
+    total_samples = 26707#11246
+    lbls = np.zeros((max_class + 1, total_samples))
+    all_paths_list = []
+    all_labels_list = []
+    for i, batch in enumerate(loader):
+        # if i == 1:
+        #     raise NotImplementedError('Assume single batch for simplicity')
+
+        cur_paths = np.array(batch[-1])
+        cur_labels = batch[1].cpu().detach().numpy().reshape((batch[1].shape[0], -1))
+        cur_labels = np.unique(cur_labels, axis=1)
+        print(cur_labels.shape)
+        cur_labels = np.pad(cur_labels, ((0, 0), (0, 30000 - cur_labels.shape[1])), mode='constant', constant_values=0)
+        # cur_labels = cur_labels[None, :]
+
+        all_paths_list.append(cur_paths)
+        all_labels_list.append(cur_labels)
+            # all_paths = np.append(all_paths, cur_paths)
+            # all_labels = np.append(all_labels, cur_labels, axis=0)
+        print(cur_paths.shape)
+        print(cur_labels.shape)
+
+    all_paths = np.concatenate(all_paths_list)
+    all_labels = np.concatenate(all_labels_list, axis=0)
+    print(all_paths.shape)
+    print(all_labels.shape)
+
+    for i, path in enumerate(all_paths):
+        cur_segm = all_labels[i]
+        cur_labels = np.unique(cur_segm)
+        cur_labels = cur_labels[cur_labels != 0]
+        lbls[cur_labels, i] = 1
+
+    sort_idx = np.argsort(all_paths)
+    paths_sorted = np.array(all_paths)[sort_idx]
+    lbls_sorted = lbls[:, sort_idx]
+    data = []
+    for i in range(max_class):
+        data.append(['label', i] + list(lbls_sorted[i]))
+
+    df = pd.DataFrame(data, columns=['layer_name', 'neuron_idx'] + list(paths_sorted))
+    df.to_pickle(store_path)

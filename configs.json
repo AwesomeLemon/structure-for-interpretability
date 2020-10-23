@@ -39,5 +39,19 @@
         "all_tasks": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19"],
         "img_rows": 32,
         "img_cols": 32
+    },
+
+    "imagenette_singletask": {
+        "path": "/mnt/raid/data/chebykin/imagenette2-320",
+        "all_tasks": ["all"],
+        "img_rows": 224,
+        "img_cols": 224
+    },
+
+    "imagenet_val": {
+        "path": "/mnt/raid/data/ni/dnn/ILSVRC2012_img_val",
+        "all_tasks": ["all"],
+        "img_rows": 224,
+        "img_cols": 224
     }
 }

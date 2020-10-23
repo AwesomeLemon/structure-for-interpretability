@@ -4,11 +4,12 @@ import numpy as np
 import warnings
 
 from multi_task.loaders.celeba_loader import CELEBA
+from multi_task.loaders.cifar10_loader import CIFAR10
 
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 
 if_imagenet = False
-
+if_cifar = True
 
 if if_imagenet:
     torchvision.datasets.imagenet.ARCHIVE_DICT['devkit']['url'] = \
@@ -23,6 +24,8 @@ if if_imagenet:
     ])
     data = torchvision.datasets.ImageNet('/mnt/raid/data/ni/dnn/imagenet', download=False,
                                          split='train', transform=transforms)
+elif if_cifar:
+    data = CIFAR10(root="/mnt/raid/data/chebykin/cifar10", split='train', if_no_transform=True)
 else:
     data = CELEBA(root="/mnt/raid/data/chebykin/celeba", is_transform=True, split='train',
                   img_size=(192, 168), augmentations=None, subtract_mean=False)
@@ -35,14 +38,18 @@ if if_imagenet:
     # amount of images in train is slightly different from what's reported at https://www.tensorflow.org/datasets/catalog/imagenet2012
     total_images = 1290129 - 1 #batch_size * 10
     total_pixels = total_images * 224 * 224
+elif if_cifar:
+    total_images = 40000
+    total_pixels = total_images * 32 * 32
 else:
     total_images = 162770
     total_pixels = total_images * 192 * 168
+
 if True:
     means = np.array([0., 0., 0.], dtype='float64')
     torch.manual_seed("0")
     for i, batch in enumerate(data_loader):
-        if if_imagenet:
+        if if_imagenet or if_cifar:
             images, _ = batch
         else:
             images = batch[0]
@@ -85,7 +92,7 @@ covs = np.zeros((3, 3), dtype='float64')
 
 torch.manual_seed("0")
 for i, batch in enumerate(data_loader):
-    if if_imagenet:
+    if if_imagenet or if_cifar:
         images, _ = batch
     else:
         images = batch[0]
@@ -113,6 +120,7 @@ covs[1, 0] = covs[0, 1]
 covs[2, 0] = covs[0, 2]
 covs[2, 1] = covs[1, 2]
 print('Final covs = ', covs)
+print('Final stds = ', np.sqrt(covs[0, 0]), np.sqrt(covs[1, 1]), np.sqrt(covs[2, 2]))
 '''
 IMAGENET:
 Final covs =  

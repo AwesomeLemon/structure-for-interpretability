@@ -138,12 +138,57 @@ class BasicBlock(nn.Module):
                 conv_to_use,
                 nn.BatchNorm2d(self.expansion * planes)
             )
+        self.relu1 = torch.nn.ReLU()
+        self.relu2 = torch.nn.ReLU()
+
+
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.bn1(out)
+        if False:
+            out = F.relu(out)
+        else:
+            out = self.relu1(out)
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        if False:
+            out = F.relu(out)
+        else:
+            out = self.relu2(out)
+        return out
+
+
+class BasicBlockNoSkip(nn.Module):
+    expansion = 1
+
+    def __init__(self, in_planes, planes, stride=1, connectivity=(None, None), if_enable_bias=False):
+        super(BasicBlockNoSkip, self).__init__()
+        connectivity1, connectivity2 = connectivity
+        if connectivity1 is None:
+            self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=if_enable_bias)
+        else:
+            self.conv1 = MaskedConv2d(in_planes, planes, connectivity=connectivity1, kernel_size=3, stride=stride,
+                                      padding=1, bias=if_enable_bias)
+
+        self.bn1 = nn.BatchNorm2d(planes)
+        if connectivity2 is None:
+            if False:
+                print('ATTENZIONE: using eye connectivity for conv2')
+                connectivity2 = torch.eye(planes, requires_grad=False).to(device);
+                self.conv2 = MaskedConv2d(planes, planes, connectivity=connectivity2, kernel_size=3, stride=1,
+                                          padding=1, bias=False)
+            else:
+                self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=if_enable_bias)
+        else:
+            self.conv2 = MaskedConv2d(planes, planes, connectivity=connectivity2, kernel_size=3, stride=1, padding=1,
+                                      bias=if_enable_bias)
+        self.bn2 = nn.BatchNorm2d(planes)
+
 
     def forward(self, x):
         out = self.conv1(x)
         out = F.relu(self.bn1(out))
         out = self.bn2(self.conv2(out))
-        out += self.shortcut(x)
         out = F.relu(out)
         return out
 
@@ -646,7 +691,7 @@ class Bottleneck(nn.Module):
 
 class BinMatrResNet(nn.Module):
     def __init__(self, block, num_blocks, num_chunks, width_mul, if_fully_connected,
-                 if_cifar=False, num_tasks=40, input_size='default', auxillary_connectivities_for_id_shortcut=None,
+                 dataset_type='celeba', num_tasks=40, input_size='default', auxillary_connectivities_for_id_shortcut=None,
                  if_enable_bias=False, replace_constants_last_layer_mode=None, replace_with_avgs_last_layer_mode=None):
         super(BinMatrResNet, self).__init__()
         self.block = [block]
@@ -654,14 +699,17 @@ class BinMatrResNet(nn.Module):
         self.in_planes = 64
         self.num_tasks = num_tasks
         self._create_connectivity_parameters(num_chunks)
-        self.if_cifar = if_cifar
+        self.dataset_type = dataset_type
         self.input_size = input_size
         if_restore_aux = auxillary_connectivities_for_id_shortcut is not None
         self.replace_constants_last_layer_mode = replace_constants_last_layer_mode
         self.replace_with_avgs_last_layer_mode = replace_with_avgs_last_layer_mode
         assert (replace_constants_last_layer_mode is None) or (replace_with_avgs_last_layer_mode is None)
 
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=if_enable_bias)
+        stride = 1
+        if self.dataset_type == 'imagenette':
+            stride = 2
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=stride, padding=1, bias=if_enable_bias)
         self.bn1 = nn.BatchNorm2d(64)
         if len(num_chunks) == 3:
             if if_restore_aux:
@@ -831,9 +879,11 @@ class BinMatrResNet(nn.Module):
         out = self.layer3(out)
 
         out = self.layer4(out)
-        if self.if_cifar:
+        if self.dataset_type == 'cifar':
             global_average_pooling_size = 4
-        else:
+        elif self.dataset_type == 'imagenette':
+            global_average_pooling_size = 14 # 224x224
+        elif self.dataset_type == 'celeba':
             # (24, 21) for 192x168 images, 16 for 128x128, 8 for 64x64
             if self.input_size == 'default':
                 global_average_pooling_size = 8
@@ -841,6 +891,8 @@ class BinMatrResNet(nn.Module):
                 global_average_pooling_size = 16
             elif self.input_size == 'biggerimg':
                 global_average_pooling_size = (24, 21)
+        else:
+            raise NotImplementedError()
         out = F.avg_pool2d(out, global_average_pooling_size)
         out = out.view(out.size(0), -1)[:, :, None]
 
@@ -928,3 +980,20 @@ class FaceAttributeDecoderCifar10SingleTask(nn.Module):
         x = self.linear(x)
         out = F.log_softmax(x, dim=1)
         return out, mask
+
+
+class FaceAttributeDecoderImagenetteSingleTask(nn.Module):
+    def __init__(self, dim=512):
+        super(FaceAttributeDecoderImagenetteSingleTask, self).__init__()
+        self.linear = nn.Linear(dim, 10)
+
+    def forward(self, x, mask):
+        x = self.linear(x)
+        out = F.log_softmax(x, dim=1)
+        return out, mask
+
+    # for lr finder:
+    # def forward(self, x):
+    #     x = self.linear(x[0])
+    #     out = F.log_softmax(x, dim=1)
+    #     return out

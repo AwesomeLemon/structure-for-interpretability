@@ -1,8 +1,10 @@
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+from util import celeba_dict
 
 if_true_cond_prob = True
+if_reverse_prob = False# if False: P(column | row), if True: P(column | not row)
 if if_true_cond_prob:
     df = pd.read_csv('list_attr_celeba.txt', sep='\s+', skiprows=1)
 else:
@@ -23,7 +25,7 @@ for i1 in range(len(df.columns.values)):
         attr1 = df.columns.values[i1]
         attr2 = df.columns.values[i2]
 
-        df_attr1_holds = df[df[attr1] == 1]
+        df_attr1_holds = df[df[attr1] == (1 if not if_reverse_prob else -1)]
         df_attr1_and_attr2_hold = df_attr1_holds[df_attr1_holds[attr2] == 1]
         if len(df_attr1_holds) == 0:
             cond_probs[i1, i2] = 1.0
@@ -33,15 +35,17 @@ for i1 in range(len(df.columns.values)):
 
 f = plt.figure(figsize=(10.80 * 1.5, 10.80 * 1.5))
 plt.tight_layout()
-plt.pcolormesh(cond_probs, figure=f, cmap='viridis')#cmap='coolwarm'
+plt.pcolormesh(cond_probs, figure=f, cmap='coolwarm')#cmap='coolwarm'
 if if_true_cond_prob:
     title = 'Conditional probabilities P(column|row)'
 else:
     title = 'Model-based Conditional probabilities P(column|row)'
+if if_reverse_prob:
+    title = title.replace('|row', '|not row')
 plt.title(title)
 ax = plt.gca()
 ax.set_yticks(np.arange(.5, 40, 1))
-ax.set_yticklabels(df.columns.values)
+ax.set_yticklabels(['not ' + attr for attr in df.columns.values])
 ax.set_xticks(np.arange(.5, 40, 1))
 ax.set_xticklabels(df.columns.values, rotation=90)
 cb = plt.colorbar(fraction=0.03, pad=0.01)
@@ -50,6 +54,8 @@ if if_true_cond_prob:
     path = f'cond_prob/celeba_cond_prob.svg'
 else:
     path = f'cond_prob/celeba_cond_prob_{model_name_short}.svg'
+if if_reverse_prob:
+    path = path.replace('.svg', '_reversed.svg')
 plt.savefig(path, format='svg', bbox_inches='tight', pad_inches=0, dpi=200)
 
 plt.show()
@@ -133,4 +139,26 @@ which means that we didn't really learn it! so I'll choose something else
 31:Smiling                0.930801              7.2
 
 
+'''
+'''
+neuron_idx = 34
+wasser_dists = np.load('wasser_dist_attr_hist_lipstickonly.npy', allow_pickle=True).item()
+x = np.array(list(wasser_dists[neuron_idx].values()))
+x[[0, 3, 4, 7, 8, 10, 12, 13, 14, 15, 16, 17, 20, 22, 23, 28, 30, 35, 38]] *= -1
+plt.scatter(x, cond_probs[:, 36]) ; plt.show()
+row_corrs = []
+column_corrs = []
+for i in range(40):
+    cur_row_corr = np.corrcoef(x, cond_probs[i, :])[0, 1]
+    cur_column_corr = np.corrcoef(x, cond_probs[:, i])[0, 1]
+    print(celeba_dict[i], f'{cur_row_corr:.2f}, {cur_column_corr:.2f}')
+    row_corrs.append(cur_row_corr)
+    column_corrs.append(cur_column_corr)
+plt.plot(row_corrs, 'o')
+plt.plot(column_corrs, 'o')
+ax = plt.gca()
+all = range(40)
+ax.set_xticks(np.arange(0, len(all), 1))
+ax.set_xticklabels([celeba_dict[i] for i in all], rotation=90)
+plt.show()
 '''

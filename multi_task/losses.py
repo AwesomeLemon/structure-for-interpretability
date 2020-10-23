@@ -121,7 +121,8 @@ def get_loss(params):
             loss_fn[t] = lambda pred, gt: loss_callable(pred, gt, None if not if_weighted_ce else weights[:, int(t)])
         return loss_fn
 
-    if params['dataset'] in ['cifar10', 'cifar10_singletask', 'cifarfashionmnist']:
+    if params['dataset'] in ['cifar10', 'cifar10_singletask', 'cifarfashionmnist',
+                             'imagenette_singletask']:
         loss_fn = {}
         for t in params['tasks']:
             loss_fn[t] = nll

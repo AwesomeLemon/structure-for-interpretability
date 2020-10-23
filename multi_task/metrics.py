@@ -101,9 +101,6 @@ class RunningMetric(object):
 
 def get_metrics(params):
     met = {}
-    if 'mnist' == params['dataset']:
-        for t in params['tasks']:
-            met[t] = RunningMetric(metric_type='ACC')
     if 'cityscapes' == params['dataset']:
         if 'S' in params['tasks']:
             met['S'] = RunningMetric(metric_type='IOU', n_classes=19)
@@ -111,11 +108,14 @@ def get_metrics(params):
             met['I'] = RunningMetric(metric_type='L1')
         if 'D' in params['tasks']:
             met['D'] = RunningMetric(metric_type='L1')
-    if params['dataset'] in ['celeba', 'cifar10', 'cifar10_singletask', 'cifarfashionmnist']:
+    if params['dataset'] in ['celeba', 'mnist',
+                             'cifar10', 'cifar10_singletask', 'cifarfashionmnist',
+                             'imagenette_singletask', 'imagenet_val']:
         if 'metric_type' in params:
             metric_type = params['metric_type']
         else:
             metric_type = 'ACC'
         for t in params['tasks']:
             met[t] = RunningMetric(metric_type=metric_type)
+
     return met

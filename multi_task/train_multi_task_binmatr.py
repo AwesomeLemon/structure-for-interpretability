@@ -183,11 +183,15 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_07_on_September_01/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_82_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_07_on_September_01/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_55_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_28_on_September_02/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_120_model.pkl'
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_46_on_September_06/optimizer=SGD_Adam|batch_size=256|lr=0.005|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_46_on_September_06/optimizer=SGD_Adam|batch_size=256|lr=0.005|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_28_on_September_21/optimizer=SGD_Adam|batch_size=128|lr=0.1|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_145_model.pkl'
         print('Continuing training from the following path:')
         print(save_model_path)
         model = load_trained_model(param_file, save_model_path)
         state = torch.load(save_model_path)
+        print('Disabling learning of connectivities!')
+        for conn in model['rep'].connectivities:
+            conn.requires_grad = False
 
     model_params = []
     if_freeze_normal_params_only = params['freeze_all_but_conns']
@@ -274,7 +278,10 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
                                      {'params':model['rep'].connectivities, 'name':'connectivities'}], lr=lr, momentum=0.9)
     if if_continue_training:
         if 'SGD_Adam' != params['optimizer']:
-            optimizer.load_state_dict(state['optimizer_state'])
+            if 'SGD' != params['optimizer']:
+                optimizer.load_state_dict(state['optimizer_state'])
+            else:
+                print('Ignoring SGD optimizer state')
 
 
     print(model['rep'])
@@ -282,8 +289,10 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
     error_sum_min = 1.0  # highest possible error on the scale from 0 to 1 is 1
 
     # train2_loader_iter = iter(train2_loader)
-    NUM_EPOCHS = 120
+    NUM_EPOCHS = 240
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, NUM_EPOCHS)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=60, gamma=0.1)
+    scheduler = None
 
     print(f'NUM_EPOCHS={NUM_EPOCHS}')
     n_iter = 0
@@ -333,8 +342,46 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
                 f.write(f'Active % =  {(sum(actives) / float(sum(totals))) * 100:.2f}' + '\n')
                 f.write('Active # per layer = ' + str(actives) + '\n')
 
+    def save_model(epoch, model, optimizer):
+        state = {'epoch': epoch + 1,
+                 'model_rep': model['rep'].state_dict(),
+                 'connectivities': model['rep'].connectivities,
+                 'optimizer_state': optimizer.state_dict()
+                 }
+        if hasattr(model['rep'], 'connectivity_comeback_multipliers'):
+            state['connectivity_comeback_multipliers'] = model['rep'].connectivity_comeback_multipliers
+        for t in tasks:
+            key_name = 'model_{}'.format(t)
+            state[key_name] = model[t].state_dict()
+        saved_models_prefix = '/mnt/raid/data/chebykin/saved_models/{}'.format(time_str)
+        if not os.path.exists(saved_models_prefix):
+            os.makedirs(saved_models_prefix)
+        save_model_path = saved_models_prefix + "/{}_{}_model.pkl".format(params['exp_id'], epoch + 1)
+        save_model_path = re.sub(r'\s+', '_', save_model_path)
+        save_model_path = re.sub(r"'", '_', save_model_path)
+        save_model_path = re.sub(r'"', '_', save_model_path)
+        save_model_path = re.sub(r':', '_', save_model_path)
+        save_model_path = re.sub(r',', '|', save_model_path)
+        if len(save_model_path) > 255:
+            save_model_path = saved_models_prefix + "/{}".format(params['exp_id'])[
+                                                    :200] + "_{}_model.pkl".format(epoch + 1)
+            save_model_path = re.sub(r'\s+', '_', save_model_path)
+            save_model_path = re.sub(r"'", '_', save_model_path)
+            save_model_path = re.sub(r'"', '_', save_model_path)
+            save_model_path = re.sub(r':', '_', save_model_path)
+            save_model_path = re.sub(r',', '|', save_model_path)
+        torch.save(state, save_model_path)
+        if epoch == 0:
+            # to properly restore model, we need source code for it
+            # Note: for quite some time I've been saving ordinary binmatr instead of binmatr2. Yikes!
+            copy('multi_task/models/binmatr2_multi_faces_resnet.py', saved_models_prefix)
+            copy('multi_task/models/pspnet.py', saved_models_prefix)
+            copy('multi_task/train_multi_task_binmatr.py', saved_models_prefix)
+
     # torch.autograd.set_detect_anomaly(True)
     for epoch in range(NUM_EPOCHS):
+        if epoch == 0:
+            save_model(-1, model, optimizer) # save initialization values
         start = timer()
         print('Epoch {} Started'.format(epoch))
         # if (epoch + 1) % 50 == 0:
@@ -347,6 +394,14 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         #     print(f'Multiply sgd-only learning rate by {lr_multiplier} at step {n_iter}')
         #     # for param_group in optimizer_val.param_groups:
         #     #     param_group['lr'] *= 0.5
+        # if (epoch + 1) % 15 == 0:
+        #     lambda_reg *= 1.5
+        #     print(f'Increased lambda_reg to {lambda_reg}')
+        # if (epoch == 90):
+        #     lambda_reg_backup = lambda_reg
+        #     lambda_reg = 0
+        # if epoch == 95:
+        #     lambda_reg = lambda_reg_backup
 
         for m in model:
             model[m].train()
@@ -415,6 +470,8 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
                 # model['rep'].eval()
                 # writer.add_graph(model['rep'], images[0][None, :, :, :])
                 # model['rep'].train()
+        if scheduler is not None:
+            scheduler.step()
 
         for m in model:
             model[m].eval()
@@ -481,43 +538,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
 
         if epoch % 3 == 0 or (error_sum < error_sum_min and epoch >= 3) or (epoch == NUM_EPOCHS - 1):
             # Save after every 3 epoch
-            state = {'epoch': epoch + 1,
-                     'model_rep': model['rep'].state_dict(),
-                     'connectivities': model['rep'].connectivities,
-                     'optimizer_state': optimizer.state_dict()
-                     }
-            if hasattr(model['rep'], 'connectivity_comeback_multipliers'):
-                state['connectivity_comeback_multipliers'] = model['rep'].connectivity_comeback_multipliers
-            for t in tasks:
-                key_name = 'model_{}'.format(t)
-                state[key_name] = model[t].state_dict()
-
-            saved_models_prefix = '/mnt/raid/data/chebykin/saved_models/{}'.format(time_str)
-            if not os.path.exists(saved_models_prefix):
-                os.makedirs(saved_models_prefix)
-
-            save_model_path = saved_models_prefix + "/{}_{}_model.pkl".format(params['exp_id'], epoch + 1)
-            save_model_path = re.sub(r'\s+', '_', save_model_path)
-            save_model_path = re.sub(r"'", '_', save_model_path)
-            save_model_path = re.sub(r'"', '_', save_model_path)
-            save_model_path = re.sub(r':', '_', save_model_path)
-            save_model_path = re.sub(r',', '|', save_model_path)
-            if len(save_model_path) > 255:
-                save_model_path = saved_models_prefix + "/{}".format(params['exp_id'])[
-                                                        :200] + "_{}_model.pkl".format(epoch + 1)
-                save_model_path = re.sub(r'\s+', '_', save_model_path)
-                save_model_path = re.sub(r"'", '_', save_model_path)
-                save_model_path = re.sub(r'"', '_', save_model_path)
-                save_model_path = re.sub(r':', '_', save_model_path)
-                save_model_path = re.sub(r',', '|', save_model_path)
-            torch.save(state, save_model_path)
-
-            if epoch == 0:
-                # to properly restore model, we need source code for it
-                # Note: for quite some time I've been saving ordinary binmatr instead of binmatr2. Yikes!
-                copy('multi_task/models/binmatr2_multi_faces_resnet.py', saved_models_prefix)
-                copy('multi_task/models/pspnet.py', saved_models_prefix)
-                copy('multi_task/train_multi_task_binmatr.py', saved_models_prefix)
+            save_model(epoch, model, optimizer)
 
         error_sum_min = min(error_sum, error_sum_min)
         writer.flush()
