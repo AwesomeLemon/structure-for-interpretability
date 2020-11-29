@@ -38,12 +38,12 @@ import argparse
 #                             'No_Beard', 'Oval_Face', 'Pale_Skin', 'Pointy_Nose', 'Receding_Hairline', 'Rosy_Cheeks',
 #                             'Sideburns', 'Smiling', 'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 'Wearing_Hat',
 #                             'Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', 'Young']
-# new_attrs = ['5_o_Clock_Shadow', 'Bald', 'Bangs', 'Black_Hair', 'Blond_Hair', 'Brown_Hair', 'Eyeglasses', 'Goatee',
-#              'Gray_Hair', 'Male', 'Mouth_Slightly_Open', 'Mustache', 'Pale_Skin', 'Smiling', 'Straight_Hair',
-#              'Wavy_Hair', 'Wearing_Hat', 'Young']
 new_attrs = ['5_o_Clock_Shadow', 'Bald', 'Bangs', 'Black_Hair', 'Blond_Hair', 'Brown_Hair', 'Eyeglasses', 'Goatee',
-             'Gray_Hair', 'Male', 'Mustache', 'Pale_Skin', 'Smiling', 'Straight_Hair',
+             'Gray_Hair', 'Male', 'Mouth_Slightly_Open', 'Mustache', 'Pale_Skin', 'Smiling', 'Straight_Hair',
              'Wavy_Hair', 'Wearing_Hat', 'Young']
+# new_attrs = ['5_o_Clock_Shadow', 'Bald', 'Bangs', 'Black_Hair', 'Blond_Hair', 'Brown_Hair', 'Eyeglasses', 'Goatee',
+#              'Gray_Hair', 'Male', 'Mustache', 'Pale_Skin', 'Smiling', 'Straight_Hair',
+#              'Wavy_Hair', 'Wearing_Hat', 'Young']
 n_attrs = len(new_attrs)
 
 

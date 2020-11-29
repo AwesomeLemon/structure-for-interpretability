@@ -150,7 +150,7 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
         disabling 188->104: same mediocre drop in pb & pa
         disabling 160->104 or 86->104: huge drop; equal p(black) in pb & pa
         '''
-        # disable_conn(state, 10, 188, 104)
+        disable_conn(state, 10, 188, 104)
         # disable_conn(state, 10, 160, 104)
         # disable_conn(state, 10, 86, 104)
 
@@ -174,7 +174,7 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
         # disable_conn(state, 10, 191, 279)
 
         # disable_conn(state, 12, 406, 204)
-        disable_conn(state, 10, 193, 125)
+        # disable_conn(state, 10, 193, 125)
     # brown hair:
     # state['connectivities'][14][11, :] = 0
     # state['connectivities'][14][11, 383] = 1
@@ -290,6 +290,16 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
         dist_cur = np.array(list(wasser_dists[neuron].values()))
         corrs.append(np.corrcoef(w_cur, dist_cur)[0, 1]) #scipy.stats.spearmanr(w_cur, dist_cur)[0]
     '''
+    '''
+    for i in range(10):
+        for j in range(10):
+            if i == j:
+                continue
+            m1 = wds[i] > 0.1
+            m2 = wds[j] < -0.1
+            m_res = np.logical_and(m1, m2)
+            print(i, j, len(np.where(m_res)[0]))
+    '''
     for m in model:
         model[m].to(device)
 
@@ -315,10 +325,10 @@ def eval_trained_model(param_file, model, if_store_val_pred=False, save_model_pa
 
     if if_pretrained_imagenet:
         params['dataset'] = 'imagenet_val'
-        params['batch_size'] = 256 * 2
+        params['batch_size'] = 256 #* 2
         params['tasks'] = ['all']
         params['metric_type'] = 'ACC'
-        model = torch.nn.DataParallel(model)
+        # model = torch.nn.DataParallel(model)
         m_tmp = {} # model should be a dict
         m_tmp['rep'] = model
         model = m_tmp
@@ -601,9 +611,18 @@ if __name__ == '__main__':
     # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_weightedce.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_00_on_August_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0003|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_61_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam001+0003_pretrain_bias_condecayall2e-6_comeback_preciserescaled_rescaled2.json'
+    # hat only:
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_56_on_September_09/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._67_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_wearinghatonly_weightedce.json'
+    # bangs only:
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_23_on_September_10/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._120_model.pkl'
+    param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_bangsonly_weightedce.json'
+    #   lipstick only
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/19_43_on_September_21/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._120_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_lipstickonly_weightedce.json'
     #   single-head cifar
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_28_on_September_21/optimizer=SGD_Adam|batch_size=128|lr=0.1|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_145_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgdadam1+001bias_batch128_weightdecay1e-4_condecayall2e-6_inc_singletask.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_58_on_October_02/optimizer=SGD|batch_size=128|lr=0.001|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0_240_model.pkl'
@@ -613,10 +632,9 @@ if __name__ == '__main__':
     # config_name = 'configs_big_img.json'
     # config_name = 'configs_bigger_img.json'
     if True:
-        trained_model = torchvision.models.__dict__['resnet18'](pretrained=True).cuda()
-        eval_trained_model(param_file, trained_model, if_pretrained_imagenet=True)
-        exit()
-
+        # trained_model = torchvision.models.__dict__['resnet18'](pretrained=True).cuda()
+        # eval_trained_model(param_file, trained_model, if_pretrained_imagenet=True)
+        # exit()
         #figure out whether need to actively disable bias due to cifar networks that ignored the enable_bias parameter
         if_actively_disable_bias=False
         try:

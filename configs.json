@@ -33,6 +33,13 @@
         "img_cols": 32
     },
 
+    "cifar10_singletask_6vsAll": {
+        "path": "/mnt/raid/data/chebykin/cifar10",
+        "all_tasks": ["all"],
+        "img_rows": 32,
+        "img_cols": 32
+    },
+
     "cifarfashionmnist": {
         "path_cifar": "/mnt/raid/data/chebykin/cifar10",
         "path_fashionmnist": "/mnt/raid/data/chebykin/fashionmnist",

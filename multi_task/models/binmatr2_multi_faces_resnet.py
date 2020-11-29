@@ -94,6 +94,7 @@ class MaskedConv2d(nn.Module):
                            self.ordinary_conv.dilation)
             # assert torch.all(torch.eq(out, self.ordinary_conv(x)))
         else:
+            # this is needed for torch pruning to work ; for fully-connected case it is equivalent to the code above
             out = self.ordinary_conv(x)
 
         return out
@@ -583,6 +584,8 @@ class BasicBlockAvgAdditivesUser(BasicBlock):
         super().__init__(in_planes, planes, stride, connectivity, if_enable_bias)
         self.id = self.__class__.id
         self.__class__.id += 1
+        self.relu1 = torch.nn.ReLU()
+        self.relu2 = torch.nn.ReLU()
 
     def forward(self, x):
         if_projection_shortcut = False
@@ -595,7 +598,7 @@ class BasicBlockAvgAdditivesUser(BasicBlock):
 
         if not(type(self.conv1) is MaskedConv2d): #the 0-th block
             post_conv1 = self.conv1(pre_conv1)
-            post_conv1_bn = F.relu(self.bn1(post_conv1))
+            post_conv1_bn = self.relu1(self.bn1(post_conv1))
         else:
             corresponding_layer_ind_conv1 = (self.id - 1) * 2 #0-th block is without connectivities
             conns_to_remove_cur = self.__class__.connections_to_remove[corresponding_layer_ind_conv1]
@@ -607,7 +610,7 @@ class BasicBlockAvgAdditivesUser(BasicBlock):
             for (from_idx, to_idx) in conns_to_remove_cur:
                 post_conv1[:, to_idx, :, :] += additives_dict_cur['conv1'][from_idx][to_idx][0]#.max() / 3
                     #the last index 0 above is because the stored shape is [1,stuff], and LHS is just [stuff]
-            post_conv1_bn = F.relu(self.bn1(post_conv1))
+            post_conv1_bn = self.relu1(self.bn1(post_conv1))
 
         if not (type(self.conv2) is MaskedConv2d):
             post_conv2 = self.conv2(post_conv1_bn)
@@ -641,10 +644,21 @@ class BasicBlockAvgAdditivesUser(BasicBlock):
                 shortcut_out = self.shortcut(x)
                 for (from_idx, to_idx) in conns_to_remove_shortcut:
                     assert from_idx == to_idx
-                    shortcut_out[:, to_idx, :, :] = additives_dict_cur['shortcut_id'][to_idx]
+                    if False:
+                        shortcut_out[:, to_idx, :, :] = additives_dict_cur['shortcut_id'][to_idx]
+                    else:
+                        # the version above doesn't work with backpropagation due to inplace modification
+                        # this version is equivalent, but avoids that problem by cloning
+                        shortcut_out_clone = shortcut_out.clone()
+                        # print('Attention! replacing with 0 instead of empirical mean')
+                        # shortcut_out_clone[:, to_idx, :, :] *= 0
+                        # shortcut_out_clone[:, to_idx, :, :] += additives_dict_cur['shortcut_id'][to_idx][0,...]
+                        shortcut_out_clone[:, to_idx, :, :] = additives_dict_cur['shortcut_id'][to_idx]
+                        shortcut_out = shortcut_out_clone
+
                 out += shortcut_out
 
-        out = F.relu(out)
+        out = self.relu2(out)
 
         return out
 
@@ -787,7 +801,13 @@ class BinMatrResNet(nn.Module):
                 all_conns = list(zip(conn_range[::2], conn_range[1::2], aux_range[::2]))
             else:
                 all_conns = list(zip(conn_range[::2], conn_range[1::2]))
-            self.layer4 = self._make_layer(block, int(512 * width_mul), num_blocks[3], 2, all_conns, if_enable_bias)
+            if True:
+                self.layer4 = self._make_layer(block, int(512 * width_mul), num_blocks[3], 2, all_conns, if_enable_bias)
+            else:
+                print('ATTENTION! MAKING layer4 EVEN MORE NARROW aGaIn __and__again__ (512 -> 128 -> 64 -> 16 -> 8)'
+                      'plus alternative version for the last step that is 16 -> 4 (for quarter width)'
+                      'plus alternative version that is 512 -> 1')
+                self.layer4 = self._make_layer(block, int(128 * width_mul), num_blocks[3], 2, all_conns, if_enable_bias)
             n_used_conns += num_blocks[3] * 2
             print(f'n_used_conns = {n_used_conns}')
         else:
@@ -975,6 +995,17 @@ class FaceAttributeDecoderCifar10SingleTask(nn.Module):
     def __init__(self, dim=512):
         super(FaceAttributeDecoderCifar10SingleTask, self).__init__()
         self.linear = nn.Linear(dim, 10)
+
+    def forward(self, x, mask):
+        x = self.linear(x)
+        out = F.log_softmax(x, dim=1)
+        return out, mask
+
+
+class FaceAttributeDecoderCifar10SingleTask6vsAll(nn.Module):
+    def __init__(self, dim=512):
+        super(FaceAttributeDecoderCifar10SingleTask6vsAll, self).__init__()
+        self.linear = nn.Linear(dim, 2)
 
     def forward(self, x, mask):
         x = self.linear(x)

@@ -9,6 +9,7 @@ from matplotlib.lines import Line2D
 from util.sgd_adam import SGD_Adam
 import numpy as np
 import torch
+import torch.nn.utils.prune as prune
 from load_model import load_trained_model
 torch.multiprocessing.set_sharing_strategy('file_system')
 from tensorboardX import SummaryWriter
@@ -19,7 +20,6 @@ import re
 import model_selector_automl
 from shutil import copy
 import os
-import torch
 import torchvision.models
 from collections import defaultdict
 from util.util import get_relevant_labels_from_batch
@@ -45,7 +45,8 @@ cudnn.enabled = True
 # @click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_nocondecayall_comeback_consontop_onlybushy.json', help='JSON parameters file')
 # @click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001_fc_baldonly_weightedce.json', help='JSON parameters file')
 # @click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall5e-7_comeback_weightedce.json', help='JSON parameters file')
-@click.option('--param_file', default='params/binmatr2_cifar_adam0005bias_fc_singletask.json', help='JSON parameters file')
+# @click.option('--param_file', default='params/binmatr2_cifar_adam0005bias_fc_singletask.json', help='JSON parameters file')
+@click.option('--param_file', default='params/binmatr2_filterwise_sgdadam001_pretrain_fc.json', help='JSON parameters file')
 @click.option('--if_debug/--not_debug', default=True, help='Whether to store results in runs_debug')
 @click.option('--conn_counts_file', default='', help='Path to store number of activated connections '
                                                                   'instead of writing to tensorboard'
@@ -54,6 +55,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
     # print("Approx. optimal weights 0.89 0.01 0.1 (S, I, D) - from https://arxiv.org/pdf/1705.07115.pdf")
     with open(param_file) as json_params:
         params = json.load(json_params)
+
 
     if params['input_size'] == 'default':
         config_path = 'configs.json'
@@ -100,6 +102,12 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
 
     loss_fn = losses.get_loss(params)
     metric = metrics.get_metrics(params)
+
+    if_scale_by_blncd_acc = 'if_scale_by_blncd_acc' in params
+    if if_scale_by_blncd_acc:
+        blncd_accs_val = defaultdict(lambda: 1)
+        for task, loss_fn_task in list(loss_fn.items()):
+            loss_fn[task] = lambda pred, gt: loss_fn_task(pred, gt, 100 ** (1 - blncd_accs_val[task]))
 
     tasks = params['tasks']
     all_tasks = configs[params['dataset']]['all_tasks']
@@ -148,7 +156,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         model['rep'].load_state_dict(pretrained_dict)
 
 
-    if_continue_training = False
+    if_continue_training = True
     if if_continue_training:
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_10_on_December_06/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3_4_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_04_on_December_10/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|___5_model.pkl'
@@ -162,7 +170,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         #     model[t].load_state_dict(state[key_name])
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_42_on_April_17/optimizer=SGD|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=True|use_pretrained_17_model.pkl'
         # param_file = 'params/binmatr2_8_8_8_sgd001_pretrain_fc_consontop.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_16_model.pkl'
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_16_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_46_on_June_08/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay_22_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_55_on_June_13/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay_28_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_03_on_June_11/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
@@ -184,14 +192,52 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_07_on_September_01/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_55_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_28_on_September_02/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_120_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_46_on_September_06/optimizer=SGD_Adam|batch_size=256|lr=0.005|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_28_on_September_21/optimizer=SGD_Adam|batch_size=128|lr=0.1|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_145_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_28_on_September_21/optimizer=SGD_Adam|batch_size=128|lr=0.1|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_145_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_49_on_November_18/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_57_on_November_18/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_19_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_53_on_November_19/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_115_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_08_on_November_19/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_18_on_November_20/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
         print('Continuing training from the following path:')
         print(save_model_path)
         model = load_trained_model(param_file, save_model_path)
         state = torch.load(save_model_path)
-        print('Disabling learning of connectivities!')
-        for conn in model['rep'].connectivities:
-            conn.requires_grad = False
+        # print('Disabling learning of connectivities!')
+        # for conn in model['rep'].connectivities:
+        #     conn.requires_grad = False
+
+    if 'prune' in params:
+        prune_ratio = params['prune']
+        def prune(model, prune_ratio):
+            # prune all convs except the first three (conv1, layer0.conv1, layer0.conv2)
+            mr = model['rep']
+            # convs = list([layer for layer in model['rep'].modules() if isinstance(layer, torch.nn.Conv2d)])[3:]
+            convs = [mr.conv1, mr.layer1[0].conv1, mr.layer1[0].conv2,
+                     mr.layer1[1].conv1.ordinary_conv, mr.layer1[1].conv2.ordinary_conv,
+                     mr.layer2[0].conv1.ordinary_conv, mr.layer2[0].conv2.ordinary_conv, mr.layer2[0].shortcut[0].ordinary_conv,
+                     mr.layer2[1].conv1.ordinary_conv, mr.layer2[1].conv2.ordinary_conv,
+                     mr.layer3[0].conv1.ordinary_conv, mr.layer3[0].conv2.ordinary_conv, mr.layer3[0].shortcut[0].ordinary_conv,
+                     mr.layer3[1].conv1.ordinary_conv, mr.layer3[1].conv2.ordinary_conv,
+                     mr.layer4[0].conv1.ordinary_conv, mr.layer4[0].conv2.ordinary_conv, mr.layer4[0].shortcut[0].ordinary_conv,
+                     mr.layer4[1].conv1.ordinary_conv, mr.layer4[1].conv2.ordinary_conv,
+                     ]
+            # also prune task heads
+            heads = []
+            for m in model:
+                if m == 'rep':
+                    continue
+                heads.append(model[m].linear)
+            to_prune = convs + heads
+            to_prune = list(zip(to_prune, ['weight'] * len(to_prune)))
+            import torch.nn.utils.prune as prune
+            prune.global_unstructured(
+                to_prune,
+                pruning_method=prune.L1Unstructured,
+                amount=prune_ratio,
+            )
+        prune(model, prune_ratio[0])
+    else:
+        print('Remember that due to pruning MaskedConv2d could be manually set to normal convolution mode')
 
     model_params = []
     if_freeze_normal_params_only = params['freeze_all_but_conns']
@@ -289,7 +335,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
     error_sum_min = 1.0  # highest possible error on the scale from 0 to 1 is 1
 
     # train2_loader_iter = iter(train2_loader)
-    NUM_EPOCHS = 240
+    NUM_EPOCHS = 120
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, NUM_EPOCHS)
     # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=60, gamma=0.1)
     scheduler = None
@@ -402,6 +448,14 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         #     lambda_reg = 0
         # if epoch == 95:
         #     lambda_reg = lambda_reg_backup
+        # if epoch == 60:
+        #     print('Dividing lambda_reg by 10!!!')
+        #     lambda_reg /= 10
+        if 'prune' in params:
+            if epoch == 30:
+                prune(model, prune_ratio[1])
+            if epoch == 60:
+                prune(model, prune_ratio[2])
 
         for m in model:
             model[m].train()
@@ -515,7 +569,9 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
                 writer.add_scalar('validation_loss_{}'.format(t), tot_loss[t] / num_val_batches, n_iter)
             metric_results = metric[t].get_result()
             for metric_key in metric_results:
-                # if metric_key == 'acc_blncd':
+                if metric_key == 'acc_blncd':
+                    if if_scale_by_blncd_acc:
+                        blncd_accs_val[t] = metric_results[metric_key]
                 writer.add_scalar('metric_{}_{}'.format(metric_key, t), metric_results[metric_key], n_iter)
                 error_sums[metric_key] += 1 - metric_results[metric_key]
             metric[t].reset()

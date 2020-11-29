@@ -12,7 +12,7 @@ import torchvision.transforms as transforms
 #         self.dataset = torchvision.datasets.CIFAR10(root=root, train=True, download=True, transform=self.transform)
 
 class CIFAR10(torchvision.datasets.CIFAR10):
-    def __init__(self, root, split="train", if_no_transform=False):
+    def __init__(self, root, split="train", if_no_transform=False, if_6vsAll=False):
 
         if_test_split = False
 
@@ -27,6 +27,12 @@ class CIFAR10(torchvision.datasets.CIFAR10):
                 transform = transforms.Compose([
                     transforms.RandomCrop(32, padding=4),
                     transforms.RandomHorizontalFlip(),
+                    transforms.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0.05),
+                    transforms.RandomAffine(
+                        degrees=(0, 5),
+                        translate=(0.1, 0.1),
+                        scale=(1.0, 1.2)
+                    ),
                     transforms.ToTensor(),
                     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
                 ])
@@ -53,4 +59,8 @@ class CIFAR10(torchvision.datasets.CIFAR10):
         else:
             raise NotImplementedError('Other splits not yet supported')
 
-        super().__init__(root, train=not if_test_split, transform=transform, download=True)
+        target_transform = None
+        if if_6vsAll:
+            target_transform = lambda lbl: 1 if lbl == 6 else 0
+        super().__init__(root, train=not if_test_split, download=True,
+                         transform=transform, target_transform=target_transform)

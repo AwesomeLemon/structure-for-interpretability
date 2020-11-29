@@ -1,0 +1,22 @@
+{
+    "optimizer": "SGD",
+    "batch_size": 128,
+    "lr": 0.1,
+    "connectivities_lr" : 0.0,
+    "chunks" : [8, 8, 8, 16, 16, 16, 16, 32, 32, 32, 32, 8, 8, 8, 8],
+    "architecture" : "binmatr2_resnet18",
+    "width_mul" : 0.125,
+    "weight_decay" : 3e-4,
+    "connectivities_l1" : 0.0,
+    "connectivities_l1_all" : true,
+    "if_fully_connected" : true,
+    "use_pretrained_resnet" : false,
+    "input_size" : "default",
+    "freeze_all_but_conns" : false,
+    "if_enable_bias" : true,
+    "metric_type" : "ACC",
+    "weighted_ce" : "unweighted",
+    "dataset": "cifar10_singletask",
+    "tasks": ["all"],
+    "scales": {"all":1.0}
+}

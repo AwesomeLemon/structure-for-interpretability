@@ -7,6 +7,7 @@ import numpy as np
 import skimage
 import torch
 from torch.utils import data
+from PIL import Image
 
 
 class CELEBA(data.Dataset):
@@ -103,13 +104,19 @@ class CELEBA(data.Dataset):
         img_path = self.files[self.split][index].rstrip()
         # print(img_path)
         label = self.labels[self.split][index]
-        img = imageio.imread(img_path)
 
-        if self.augmentations is not None:
-            img = self.augmentations(np.array(img, dtype=np.uint8))
-
-        if self.is_transform:
-            img = self.transform_img(img)
+        if self.augmentations is None:
+            img = imageio.imread(img_path)
+            if self.is_transform:
+                img = self.transform_img(img)
+        else:
+            # ATTENTION: I wrote this more efficient pipeline when I introduced augmentations
+            # img = self.augmentations(np.array(img, dtype=np.uint8))
+            img = Image.open(img_path)
+            # to bgr:
+            r, g, b = img.split()
+            img = Image.merge("RGB", (b, g, r)) #no "BGR" mode, but it doesn't matter
+            img = self.augmentations(img)
 
         return [img] + label + [img_path]
 
@@ -127,7 +134,7 @@ class CELEBA(data.Dataset):
         img = img.astype(np.float64)
         if self.subtract_mean:
             img -= self.mean
-        img = skimage.transform.resize(img, (self.img_size[0], self.img_size[1]), order=3)
+        img = skimage.transform.resize(img, (self.img_size[0], self.img_size[1]), order=1)
         # Resize scales images from 0 to 255, thus we need
         # to divide by 255.0
         img = img.astype(float) / 255.0

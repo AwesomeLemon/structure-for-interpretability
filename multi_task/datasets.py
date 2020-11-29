@@ -1,3 +1,4 @@
+import operator
 import torch
 from torchvision import transforms
 import torchvision
@@ -42,13 +43,27 @@ def get_dataset(params, configs):
         return train_loader, val_loader, None
 
     if 'celeba' == params['dataset']:
-        train_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='train', img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']), augmentations=None)
+        img_size = (configs['celeba']['img_rows'], configs['celeba']['img_cols'])
+        if False:
+            transform = transforms.Compose([
+                transforms.Resize(img_size),
+                transforms.RandomHorizontalFlip(),
+                transforms.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05),
+                transforms.RandomAffine(
+                    degrees=(-5, 5),
+                    translate=(0.1, 0.1),
+                    scale=(1.0, 1.2)
+                ),
+                transforms.ToTensor(),
+                transforms.Normalize((73.15835921 / 255, 82.90891754 / 255, 72.39239876 / 255), (1, 1, 1))])
+        train_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='train',
+                           img_size=img_size, augmentations=None)#transform)
         # train2_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='train2',img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']), augmentations=None)
-        val1_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='val', img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']), augmentations=None)
+        val1_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='val', img_size=img_size, augmentations=None)
 
-        train_loader = torch.utils.data.DataLoader(train_dst, batch_size=params['batch_size'], shuffle=True, num_workers=8, pin_memory=False)
+        train_loader = torch.utils.data.DataLoader(train_dst, batch_size=params['batch_size'], shuffle=True, num_workers=8, pin_memory=True)
         # train2_loader = torch.utils.data.DataLoader(train2_dst, batch_size=params['batch_size'], shuffle=True,num_workers=4)
-        val_loader = torch.utils.data.DataLoader(val1_dst, batch_size=params['batch_size'] * 4, shuffle=False, num_workers=8, pin_memory=False)
+        val_loader = torch.utils.data.DataLoader(val1_dst, batch_size=params['batch_size'], shuffle=False, num_workers=8, pin_memory=True)
         # val2_loader = torch.utils.data.DataLoader(val2_dst, batch_size=params['batch_size'], num_workers=4,
         #                                           shuffle=True)
         return train_loader, val_loader, None#train2_loader
@@ -56,6 +71,27 @@ def get_dataset(params, configs):
     if ('cifar10' == params['dataset']) or ('cifar10_singletask' == params['dataset']):
         train_dst = CIFAR10(root=configs[params['dataset']]['path'], split='train')
         val_dst = CIFAR10(root=configs[params['dataset']]['path'], split='val')
+        tst_dst = CIFAR10(root=configs[params['dataset']]['path'], split='test')
+
+        def order_dataset_by_label(dataset, dataset_size=10000):
+            loader = torch.utils.data.DataLoader(dataset, batch_size=dataset_size, shuffle=False)
+            batch = next(iter(loader))
+            labels = batch[1]
+            indices_and_labels = list(zip(range(dataset_size), labels))
+            indices_and_labels.sort(key=operator.itemgetter(1))
+            sorted_indices = list(zip(*indices_and_labels))[0]
+            return torch.utils.data.Subset(dataset, sorted_indices)
+
+
+        batch_size = params['batch_size']
+        train_loader = torch.utils.data.DataLoader(train_dst, batch_size=int(batch_size), shuffle=True, num_workers=8)
+        val_loader = torch.utils.data.DataLoader(val_dst, batch_size=int(batch_size * 4), shuffle=False, num_workers=8)
+        tst_loader = torch.utils.data.DataLoader(tst_dst, batch_size=int(batch_size * 4), shuffle=False, num_workers=8)
+        return train_loader, val_loader, tst_loader
+
+    if ('cifar10_singletask_6vsAll' == params['dataset']):
+        train_dst = CIFAR10(root=configs[params['dataset']]['path'], split='train', if_6vsAll=True)
+        val_dst = CIFAR10(root=configs[params['dataset']]['path'], split='val', if_6vsAll=True)
 
         train_loader = torch.utils.data.DataLoader(train_dst, batch_size=params['batch_size'], shuffle=True, num_workers=8)
         val_loader = torch.utils.data.DataLoader(val_dst, batch_size=params['batch_size'] * 4, shuffle=False, num_workers=8)
@@ -100,8 +136,16 @@ def get_dataset(params, configs):
         return train_loader, val_loader, None
 
     if 'imagenet_val' == params['dataset']:
+        # transform_val = transforms.Compose([
+        #     transforms.Resize((224, 224)),
+        #     transforms.ToTensor(),
+        #     # normalization matches code from Network Dissection
+        #     transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                          std=[0.229, 0.224, 0.225])
+        # ])
         transform_val = transforms.Compose([
-            transforms.Resize((224, 224)),
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
             transforms.ToTensor(),
             # normalization matches code from Network Dissection
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -111,9 +155,23 @@ def get_dataset(params, configs):
             "https://github.com/goodclass/PythonAI/raw/master/imagenet/ILSVRC2012_devkit_t12.tar.gz"
         val_dst = torchvision.datasets.ImageNet('/mnt/raid/data/ni/dnn/imagenet2012', split='val', transform=transform_val,
                                                 download=False)
-        val_loader = torch.utils.data.DataLoader(val_dst, batch_size=params['batch_size'] * 4, shuffle=False, num_workers=8)
+        val_loader = torch.utils.data.DataLoader(val_dst, batch_size=int(params['batch_size'] * 4), shuffle=False, num_workers=8)
 
         return None, val_loader, None
+
+    if 'imagenet_test' == params['dataset']:
+        transform_val = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            # normalization matches code from Network Dissection
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
+        ])
+        tst_dst = torchvision.datasets.ImageFolder('/mnt/raid/data/ni/dnn/ILSVRC2012_img_test', transform=transform_val)
+        tst_loader = torch.utils.data.DataLoader(tst_dst, batch_size=int(params['batch_size'] * 4), shuffle=False, num_workers=8)
+
+        return None, None, tst_loader
 
     if 'broden_val' == params['dataset']:
         bds = BrodenDataset('/mnt/raid/data/chebykin/NetDissect-Lite/dataset', resolution=224,
@@ -123,7 +181,7 @@ def get_dataset(params, configs):
                             transform_segment=transforms.Compose([
                         ScaleSegmentation(224, 224)
                         ]),
-                            include_bincount=False, split='train', categories=["object", "part", "scene", "texture"],
+                            include_bincount=False, split='train', categories=["object", "part", "scene", "material", "texture", "color"],#["object", "part", "scene", "texture"],
                             if_include_path=True)
         val_loader = torch.utils.data.DataLoader(bds, batch_size=params['batch_size'], num_workers=8, shuffle=False)
         return None, val_loader, None

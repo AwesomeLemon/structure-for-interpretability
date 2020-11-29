@@ -1,4 +1,7 @@
+from collections import defaultdict
+
 import math
+import operator
 import os
 import random
 import kornia
@@ -12,7 +15,7 @@ from torch import nn
 from torch.nn.functional import softmax
 import torch
 
-from PIL import Image
+from PIL import Image, ImageDraw
 from skimage.filters import gaussian
 from scipy.ndimage.interpolation import shift
 import shutil
@@ -250,7 +253,7 @@ def format_np_output(np_arr):
 
 
 def save_image_batch(im_batch, path):
-    fig = plt.figure(figsize=(10, 4.5))  # (20, 5)
+    fig = plt.figure()#figsize=(10, 4.5))  # (20, 5)
     im_total = len(im_batch)
     rows_num = 2
     cols_num = int(math.ceil(im_total / rows_num))
@@ -307,20 +310,39 @@ def punish_outside_center(tensor):
     return -tensor2.mean()
 
 
-def images_list_to_grid_image(ims):
+def images_list_to_grid_image(ims, if_rgba=False, if_draw_line=False):
     n_ims = len(ims)
     width, height = ims[0].size
     rows_num = math.floor(math.sqrt(n_ims))
     cols_num = int(math.ceil(n_ims / rows_num))
-    new_im = Image.new('RGB', (cols_num * width, rows_num * height))
+    # rows_num = 500
+    # cols_num = 20
+    new_im = Image.new('RGB' if not if_rgba else 'RGBA', (cols_num * width, rows_num * height))
     for j in range(n_ims):
         row = j // cols_num
         column = j - row * cols_num
         new_im.paste(ims[j], (column * width, row * height))
+    if if_draw_line:
+        draw = ImageDraw.Draw(new_im)
+        draw.line((0, height // 2 * rows_num - 1, width * cols_num, height // 2 * rows_num - 1),
+                  fill=(200, 100, 100, 255), width=1)
     return new_im
 
 
-def proper_hist(data, title='', ax=None, xlim_left=None, xlim_right=None, bin_size=0.1, alpha=1, density=None):
+def proper_hist(data, title='', ax=None, xlim_left=None, xlim_right=None, bin_size=0.1, alpha=1, density=None,
+                if_determine_bin_size=False):
+    data = data.flatten() # increases speed dramatically
+    if if_determine_bin_size:
+        bin_size = bin_size
+        diff = np.max(data) - np.min(data)
+        if diff == 0.0:
+            return
+        while diff / bin_size < 10:
+            bin_size /= (diff / bin_size)
+            print(f'New bin size: {bin_size}')
+        while diff / bin_size > 80:
+            bin_size *= 2
+            print(f'New bin size: {bin_size}')
     bins = math.ceil((np.max(data) - np.min(data)) / bin_size)
     if np.max(data) - np.min(data) == 0:
         bins = None
@@ -335,13 +357,13 @@ def proper_hist(data, title='', ax=None, xlim_left=None, xlim_right=None, bin_si
 
 
 def recreate_image_nonceleba_batch(img, dataset_type='cifar'):
-    if dataset_type == 'cifar':
+    if dataset_type in ['cifar', 'cifar_6vsAll']:
         means = np.array([0.4914, 0.4822, 0.4465]) * 255
         std = [0.2023, 0.1994, 0.2010]
     elif dataset_type == 'imagenette':
         means = np.array([109.5388, 118.6897, 124.6901])
         std = [0.224, 0.224, 0.224]
-    elif dataset_type == 'imagenet_val':
+    elif dataset_type in ['imagenet_val', 'imagenet_test']:
         means = np.array([0.485, 0.456, 0.406]) * 255
         std = [0.229, 0.224, 0.225]
     else:
@@ -409,7 +431,53 @@ def store_path_to_label_dict(loader, store_path):
 
 def store_path_and_label_df_broden(loader, store_path):
     max_class = 1197
-    total_samples = 26707#11246
+    total_samples = 44404#26707#11246
+    lbls = np.zeros((max_class + 1, total_samples))
+    all_paths_list = []
+    all_labels_list = []
+    for i, batch in enumerate(loader):
+        # if i == 1:
+        #     raise NotImplementedError('Assume single batch for simplicity')
+
+        cur_paths = np.array(batch[-1])
+        cur_labels = batch[1].cpu().detach().numpy().reshape((batch[1].shape[0], -1))
+        cur_labels = np.unique(cur_labels, axis=1)
+        print(cur_labels.shape)
+        cur_labels = np.pad(cur_labels, ((0, 0), (0, 45000 - cur_labels.shape[1])), mode='constant', constant_values=0)
+        # cur_labels = cur_labels[None, :]
+
+        all_paths_list.append(cur_paths)
+        all_labels_list.append(cur_labels)
+            # all_paths = np.append(all_paths, cur_paths)
+            # all_labels = np.append(all_labels, cur_labels, axis=0)
+        print(cur_paths.shape)
+        print(cur_labels.shape)
+
+    all_paths = np.concatenate(all_paths_list)
+    all_labels = np.concatenate(all_labels_list, axis=0)
+    print(all_paths.shape)
+    print(all_labels.shape)
+
+    for i, path in enumerate(all_paths):
+        cur_segm = all_labels[i]
+        cur_labels = np.unique(cur_segm)
+        cur_labels = cur_labels[cur_labels != 0]
+        lbls[cur_labels, i] = 1
+
+    sort_idx = np.argsort(all_paths)
+    paths_sorted = np.array(all_paths)[sort_idx]
+    lbls_sorted = lbls[:, sort_idx]
+    data = []
+    for i in range(max_class):
+        data.append(['label', i] + list(lbls_sorted[i]))
+
+    df = pd.DataFrame(data, columns=['layer_name', 'neuron_idx'] + list(paths_sorted))
+    df.to_pickle(store_path)
+
+
+def store_path_to_label_dict_cifar(loader, store_path):
+    max_class = 9
+    total_samples = 10000
     lbls = np.zeros((max_class + 1, total_samples))
     all_paths_list = []
     all_labels_list = []
@@ -451,3 +519,20 @@ def store_path_and_label_df_broden(loader, store_path):
 
     df = pd.DataFrame(data, columns=['layer_name', 'neuron_idx'] + list(paths_sorted))
     df.to_pickle(store_path)
+
+
+def convert_imagenet_path_to_label_dict_to_df():
+    path_to_label_dict = np.load('path_to_label_dict_imagenet_val_val.npy', allow_pickle=True).item()
+    path_label_items = list(path_to_label_dict.items())
+    path_label_items.sort(key=operator.itemgetter(0))
+    per_label_dict = defaultdict(list)
+    n_classes = 1000
+    for path, label in path_label_items:
+        for i in range(n_classes):
+            per_label_dict[i].append(1 if label == i else 0)
+    data = []
+    for i in range(n_classes):
+        data.append(['label', i, *per_label_dict[i]])
+        # df_cond.loc['label', i
+    df_label = pd.DataFrame(data, columns=['layer_name', 'neuron_idx'] + list(list(zip(*path_label_items))[0]))
+    df_label.to_pickle('df_label_imagenet_val.pkl')

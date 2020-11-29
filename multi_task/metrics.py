@@ -109,7 +109,7 @@ def get_metrics(params):
         if 'D' in params['tasks']:
             met['D'] = RunningMetric(metric_type='L1')
     if params['dataset'] in ['celeba', 'mnist',
-                             'cifar10', 'cifar10_singletask', 'cifarfashionmnist',
+                             'cifar10', 'cifar10_singletask', 'cifar10_singletask_6vsAll', 'cifarfashionmnist',
                              'imagenette_singletask', 'imagenet_val']:
         if 'metric_type' in params:
             metric_type = params['metric_type']

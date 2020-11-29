@@ -25,7 +25,7 @@ parser.add_argument("-l4", "--lambda4", type=int, default=10)
 parser.add_argument("-l5", "--lambda5", type=int, default=10)
 parser.add_argument("-gp", "--lambda_gp", type=int, default=150)
 parser.add_argument("-img", "--img_size", type=int, default=256)
-parser.add_argument("-v", "--vec_size", type=int, default=18)
+parser.add_argument("-v", "--vec_size", type=int, default=10)
 args = parser.parse_args()
 
 from tensorflow.python.client import device_lib

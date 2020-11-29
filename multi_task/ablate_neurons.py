@@ -1,3 +1,6 @@
+import json
+import pickle
+
 from pathlib import Path
 
 import torch
@@ -7,10 +10,26 @@ import numpy as np
 from matplotlib import pyplot as plt
 from util.util import *
 from scipy.integrate import simps
-from multi_task.load_model import eval_trained_model, load_trained_model
+
+from sklearn.metrics import confusion_matrix
+import pandas as pd
+try:
+    from load_model import eval_trained_model, load_trained_model
+    import datasets
+    from util.dicts import imagenet_dict
+except:
+    from multi_task.load_model import eval_trained_model, load_trained_model
+    from multi_task import datasets
+    from multi_task.util.dicts import imagenet_dict
+
+import torch.backends.cudnn as cudnn
+cudnn.benchmark = True
+cudnn.enabled = True
+
+imagenet_dict_reversed = dict(zip(imagenet_dict.values(), imagenet_dict.keys()))
 
 if_pretrained_imagenet = True
-np.warnings.filterwarnings('error', category=np.VisibleDeprecationWarning)
+# np.warnings.filterwarnings('error', category=np.VisibleDeprecationWarning)
 
 def calc_l1_norms_of_weights(save_model_path):
     if not if_pretrained_imagenet:
@@ -101,11 +120,225 @@ def compare_ablation_strategies(save_model_path, param_file, step_size, n_steps,
         x_range = range(0, (n_steps + 1) * step_size, step_size)[:len(accs)]
         area = simps(accs, dx=step_size / x_range[-1])
         plt.plot(x_range, accs, label=fun_name + f'_{area:.2f}')
-        # np.save(f'ablations/{folder_name}/accs_{fun_name}_{layer_ind}.npy', (accs, area), allow_pickle=True)
+        np.save(f'ablations/{folder_name}/accs_{fun_name}_{layer_ind}.npy', (accs, area), allow_pickle=True)
     plt.legend()
-    # plt.savefig(f'ablations/{folder_name}/l_{layer_ind}.png', format='png', bbox_inches='tight', pad_inches=0)
+    plt.savefig(f'ablations/{folder_name}/l_{layer_ind}.png', format='png', bbox_inches='tight', pad_inches=0)
+    plt.show()
+    plt.close()
+
+def plot_ablation_strategy_comparisons(folder_name, fun_names, layer_inds):
+    for layer_ind in layer_inds:
+        step_size = 5
+        n_steps = 51
+        if layer_ind > 11:
+            step_size = 10
+        for fun_name in fun_names:
+            accs, area = np.load(f'ablations/{folder_name}/accs_{fun_name}_{layer_ind}.npy', allow_pickle=True)
+            x_range = range(0, (n_steps + 1) * step_size, step_size)[:len(accs)]
+            plt.plot(x_range, accs, label=fun_name + f'_{area:.2f}')
+        plt.legend()
+        plt.title(layer_ind)
+        plt.savefig(f'ablations/{folder_name}/l_{layer_ind}_absmax_{"_".join(fun_names)}.png', format='png', bbox_inches='tight', pad_inches=0)
+        plt.close()
+
+def create_areas_array(folder_name, fun_names, layer_inds):
+    areas = np.zeros((len(layer_inds), len(fun_names)))
+    for layer_ind in layer_inds:
+        for i, fun_name in enumerate(fun_names):
+            _, area = np.load(f'ablations/{folder_name}/accs_{fun_name}_{layer_ind}.npy', allow_pickle=True)
+            areas[layer_ind, i] = area
+    return areas
+
+def make_predictions(model, loaded_activations, if_disable, disable_ind=None):
+    acts = loaded_activations.clone().cuda()
+    if if_disable:
+        acts[:, disable_ind] = 0  # 10 * acts_avg[i]#
+
+    y_pred = []
+    n_batches = 10
+    n_samples = acts.shape[0]
+    batch_size = int(np.ceil(n_samples / n_batches))
+    for i in range(n_batches):
+        x = acts[i * batch_size:(i+1) * batch_size, :]
+        # x = model.layer4(x)
+        # x = model.avgpool(x)
+        # x = torch.flatten(x, 1)
+
+        x = model.fc(x)
+        y_pred_cur = torch.argmax(x, dim=1).detach().cpu().numpy()
+        y_pred.append(y_pred_cur)
+    y_pred = np.hstack(y_pred)
+    return y_pred
+
+def sort_neurons_for_class(wasser_dists_values, target_class):
+    w_dists = np.array([w_dict[target_class] for w_dict in wasser_dists_values])
+    idx = np.argsort(w_dists)
+    return idx, w_dists
+
+
+def plot_prec_recall_change(save_model_path, param_file,
+                          # saved_activations_path='activations_on_validation_preserved_spatial_10_pretrained_imagenet.npy',
+                          saved_activations_path='activations_on_validation_14_pretrained_imagenet.npy',
+                            saved_labels_path='labels_pretrained_imagenet.npy', wd_path=None):
+
+    model = reload_model(save_model_path, param_file)
+    with open(saved_activations_path, 'rb') as f:
+        loaded_activations = torch.tensor(pickle.load(f))
+    labels = np.load(saved_labels_path)
+    wasser_dists_values = list(np.load(wd_path, allow_pickle=True).item().values())
+
+    y_pred = make_predictions(model, loaded_activations, if_disable=False)
+    conf_matr = confusion_matrix(labels, y_pred)
+    precision_before, recall_before = conf_matr.diagonal() / conf_matr.sum(axis=0), conf_matr.diagonal() / conf_matr.sum(axis=1)
+
+    n_neurons = 512
+    n_classes = 1000
+    n_neurons_to_disable = [1, 4, 8, 16, 32, 64, 128]#[8, 16]#
+    neuron_sorting_funs = [lambda wasser_dists_values, idx: np.random.permutation(n_neurons),
+                            lambda wasser_dists_values, idx: np.array(sort_neurons_for_class(wasser_dists_values, idx)[0][::-1]),
+                            lambda wasser_dists_values, idx: sort_neurons_for_class(wasser_dists_values, idx)[0],
+                           ]
+    neuron_sorting_fun_names = ['rand', 'sort by max', 'sort by min']
+    precision_means = np.zeros((len(neuron_sorting_funs), len(n_neurons_to_disable)))
+    recall_means = np.zeros((len(neuron_sorting_funs), len(n_neurons_to_disable)))
+    for i, sorting_fun in enumerate(neuron_sorting_funs):
+        for j, n_to_disable in enumerate(n_neurons_to_disable):
+            print(n_to_disable)
+            p_diffs = []
+            r_diffs = []
+            for class_idx in range(n_classes):
+                x = loaded_activations.clone().cuda()
+                cur_idx = list(sorting_fun(wasser_dists_values, class_idx)[:n_to_disable])
+                x[:, cur_idx] = 0
+                x = model.fc(x)
+                conf_matr = confusion_matrix(labels, torch.argmax(x, dim=1).detach().cpu().numpy())
+                p, r = conf_matr.diagonal() / conf_matr.sum(axis=0), conf_matr.diagonal() / conf_matr.sum(axis=1)
+                p = np.nan_to_num(p)
+                p_diff = p[class_idx] - precision_before[class_idx]
+                r_diff = r[class_idx] - recall_before[class_idx]
+                p_diffs.append(p_diff)
+                r_diffs.append(r_diff)
+
+            precision_means[i, j] = np.mean(p_diffs)
+            recall_means[i, j] = np.mean(r_diffs)
+
+    plt.title('Precision change')
+    plt.xlabel('Units ablated')
+    plt.xticks(n_neurons_to_disable)
+    for i in range(len(neuron_sorting_funs)):
+        plt.plot(n_neurons_to_disable, precision_means[i],
+                     label=neuron_sorting_fun_names[i])
+    plt.legend()
     plt.show()
 
+    plt.title('Recall change')
+    plt.xlabel('Units ablated')
+    plt.xticks(n_neurons_to_disable)
+    for i in range(len(neuron_sorting_funs)):
+        plt.plot(n_neurons_to_disable, recall_means[i],
+                     label=neuron_sorting_fun_names[i])
+    plt.legend()
+    plt.show()
+
+
+def ablate_neurons_based_on_saved_activations(save_model_path, param_file,
+                                              # saved_activations_path='activations_on_validation_preserved_spatial_10_pretrained_imagenet.npy',
+                                              saved_activations_path='activations_on_validation_14_pretrained_imagenet.npy',
+                                              saved_labels_path='labels_pretrained_imagenet.npy', wd_path=None):
+    model = reload_model(save_model_path, param_file)
+    with open(saved_activations_path, 'rb') as f:
+        loaded_activations = torch.tensor(pickle.load(f))
+    acts_avg = loaded_activations.mean(dim=0)
+
+    labels = np.load(saved_labels_path)
+
+    n_neurons = 512#256#
+    n_classes = 1000
+    precisions_after_disabling = np.zeros((n_neurons, n_classes))
+    recalls_after_disabling = np.zeros((n_neurons, n_classes))
+    acc_diffs = np.zeros(n_neurons)
+
+    with torch.no_grad():
+        y_pred = make_predictions(model, loaded_activations, if_disable=False)
+        conf_matr = confusion_matrix(labels, y_pred)
+        precision_before, recall_before = conf_matr.diagonal() / conf_matr.sum(axis=0), conf_matr.diagonal() / conf_matr.sum(axis=1)
+        acc_before = conf_matr.diagonal().sum() / conf_matr.sum()
+        for i in range(n_neurons):
+            print(i)
+            y_pred = make_predictions(model, loaded_activations, if_disable=True, disable_ind=i)
+            conf_matr = confusion_matrix(labels, y_pred)
+            precision, recall = conf_matr.diagonal() / conf_matr.sum(axis=0), conf_matr.diagonal() / conf_matr.sum(axis=1)
+            precisions_after_disabling[i] = precision
+            recalls_after_disabling[i] = recall
+            acc_diffs[i] = conf_matr.diagonal().sum() / conf_matr.sum() - acc_before
+
+    # plt.plot(acc_diffs, 'o')
+    # plt.ylim(-0.0015, 0.0015)
+    # plt.show()
+
+    # plt.plot((recalls_after_disabling - recall_before)[444], 'o')
+    # plt.show()
+
+    wasser_dists_values = list(np.load(wd_path, allow_pickle=True).item().values())
+    wds = pd.DataFrame(wasser_dists_values).to_numpy().T
+
+    w = model.fc.weight.detach().cpu().numpy()
+
+    rng = np.arange(n_neurons) ; np.random.shuffle(rng)
+    maxs = np.array([np.max(list(wd_neuron.values())) for wd_neuron in wasser_dists_values])
+    idx = np.argsort(maxs)
+    mins = np.array([np.abs(np.min(list(wd_neuron.values()))) for wd_neuron in wasser_dists_values])
+    # l1_norms_dict = np.load(f'l1_norms_{model_name_short}.npy', allow_pickle=True).item()
+    # l1s = l1_norms_dict['layer4.1.conv2.weight']
+    # l1s = l1s.values()
+    # l1s = np.array(list(l1s))
+    # idx = np.argsort(l1s)
+
+    # np.save('prec_rec_10.npy',
+    #         (precision_before, recall_before, precisions_after_disabling, recalls_after_disabling, acc_diffs),
+    #         allow_pickle=True)
+
+    accs_cumulative_ablation = np.zeros(n_neurons)
+    with torch.no_grad():
+        for i in range(0, n_neurons):
+            print(i)
+            x = loaded_activations.clone()
+            x[:, idx[:i]] = 0#acts_avg[:i]#
+            x = model.fc(x)
+            y_pred = torch.argmax(x, dim=1).detach().cpu().numpy()
+            conf_matr = confusion_matrix(labels, y_pred)
+            accs_cumulative_ablation[i] = conf_matr.diagonal().sum() / conf_matr.sum()
+    plt.plot(accs_cumulative_ablation)
+    accs_cumulative_ablation = np.zeros(n_neurons)
+    with torch.no_grad():
+        for i in range(0, n_neurons):
+            print(i)
+            x = loaded_activations.clone()
+            x[:, idx[:i]] = acts_avg[idx[:i]]#
+            x = model.fc(x)
+            y_pred = torch.argmax(x, dim=1).detach().cpu().numpy()
+            conf_matr = confusion_matrix(labels, y_pred)
+            accs_cumulative_ablation[i] = conf_matr.diagonal().sum() / conf_matr.sum()
+    plt.plot(accs_cumulative_ablation)
+    plt.show()
+
+    imagenet_dict_reversed = dict(zip(imagenet_dict.values(), imagenet_dict.keys()))
+
+    idx, wdists = sort_neurons_for_class(wasser_dists_values, 689)
+
+    class_idx1 = 11
+    idx, wdists = sort_neurons_for_class(wasser_dists_values, class_idx1)
+    x = loaded_activations.clone()
+    cur_idx = list(idx[:8])  # + list(idx[-5:])#idx[0]
+    x[:, cur_idx] = 0  # acts_avg[cur_idx]
+    x = model.fc(x)
+    conf_matr = confusion_matrix(labels, torch.argmax(x, dim=1).detach().cpu().numpy())
+    p, r = conf_matr.diagonal() / conf_matr.sum(axis=0), conf_matr.diagonal() / conf_matr.sum(axis=1)
+    class_idx2 = class_idx1
+    print(f'{precision_before[class_idx2]:.3f} {p[class_idx2]:.3f} \n{recall_before[class_idx2]:.3f} {r[class_idx2]:.3f}')
+    print(w[class_idx2, cur_idx])
+
+    y = 1
 
 if __name__ == '__main__':
     #   single-head cifar
@@ -132,26 +365,43 @@ if __name__ == '__main__':
                                         14:'layer4.1.conv2.ordinary_conv.weight'}
     # calc_l1_norms_of_weights(save_model_path)
     # exit()
-    step_size = 100
-    n_steps = 51
+    ablate_neurons_based_on_saved_activations(save_model_path, param_file,
+                    wd_path='wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_' + str(14) + '.npy')
+    exit()
+    # plot_prec_recall_change(save_model_path, param_file,
+    #                 wd_path='wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_' + str(14) + '.npy')
+    # exit()
+    # plot_ablation_strategy_comparisons(model_name_short, ['sum', 'max', 'max+min', 'min'], range(15))
+    # exit()
+    # areas = create_areas_array(model_name_short, ['sum', 'max', 'max+min', 'min'], range(15))
+    # exit()
     n_start = 0
     # layer_ind = 10
-    for layer_ind in [13]:
-        # if layer_ind > 11:
-        #     step_size = 10
+    for layer_ind in [14, 13, 12]:#range(12):#[7, 8, 9, 10]:#
+        n_steps = 51
+        step_size = 5
+        if layer_ind <= 2:
+            step_size = 3
+            n_steps = 22
+        if layer_ind >= 11:
+            step_size = 10
         # wd_path = 'wasser_dists/wasser_dist_attr_hist_bettercifar10single_' + str(layer_ind) + '.npy'
         wd_path = 'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_' + str(layer_ind) + '.npy'
         plt.title(f'{layer_ind}')
         wasser_dists_values = np.load(wd_path, allow_pickle=True).item().values()
         compare_ablation_strategies(save_model_path, param_file, step_size, n_steps, layer_ind, n_start,
                 [
-                    (lambda wd_neuron: np.sum(np.abs(list(wd_neuron.values()))), 'sum', wasser_dists_values),
-                    (lambda wd_neuron: np.max(list(wd_neuron.values())), 'max', wasser_dists_values),
-                    # lambda vals: np.max(vals) + (np.abs(np.min(vals)) if np.min(vals) < -0.1 else 0),
-                    (lambda wd_neuron: np.max(list(wd_neuron.values())) + np.abs(np.min(list(wd_neuron.values()))), 'max+min', wasser_dists_values),
-                    (lambda wd_neuron: np.random.rand(), 'rand', wasser_dists_values),
-                    (lambda wd_neuron: np.abs(np.min(list(wd_neuron.values()))), 'min', wasser_dists_values),
-                    # (lambda l1_norm: l1_norm, 'l1', l1_norms_dict[usual_layer_idx_to_l1_norms_idx[layer_ind]].values()),
+                    # (lambda wd_neuron: np.sum(np.abs(list(wd_neuron.values()))), 'sum', wasser_dists_values),
+                    # (lambda wd_neuron: np.max(list(wd_neuron.values())), 'max', wasser_dists_values),
+                    # # lambda vals: np.max(vals) + (np.abs(np.min(vals)) if np.min(vals) < -0.1 else 0),
+                    # (lambda wd_neuron: np.max(list(wd_neuron.values())) + np.abs(np.min(list(wd_neuron.values()))), 'max+min', wasser_dists_values),
+                    # (lambda wd_neuron: np.abs(np.min(list(wd_neuron.values()))), 'min', wasser_dists_values),
+                    # (lambda wd_neuron: np.random.rand(), 'rand', wasser_dists_values),
+                    # (lambda l1_norm: l1_norm, 'l1', l1_norms_dict[usual_layer_idx_to_l1_norms_idx[layer_ind].replace('ordinary_conv.', '')].values()),
+                    # (lambda wd_neuron: np.random.rand(), 'rand2', wasser_dists_values),
+                    # (lambda wd_neuron: np.random.rand(), 'rand3', wasser_dists_values),
+                    # (lambda wd_neuron: np.random.rand(), 'rand4', wasser_dists_values),
+                    (lambda wd_neuron: np.max(np.abs(list(wd_neuron.values()))), 'absmax', wasser_dists_values),
                 ], model_name_short)
 
     # if True:
@@ -162,3 +412,31 @@ if __name__ == '__main__':
     # accs = calc_accuracies_after_ablation(param_file, trained_model, layer_ind, sorted_neurons, step_size, n_steps)
     # plt.plot(range(0, n_steps * step_size, step_size), accs)
     # plt.show()
+
+'''
+w = model.fc.weight.detach().cpu().numpy()
+
+imagenet_dict_reversed = dict(zip(imagenet_dict.values(), imagenet_dict.keys()))
+
+wasser_dists_values = np.load(wd_path, allow_pickle=True).item().values()
+wasser_dists_values = list(np.load(wd_path, allow_pickle=True).item().values())
+
+def sort_neurons_for_class(wasser_dists_values, target_class):
+    w_dists = np.array([w_dict[target_class] for w_dict in wasser_dists_values])
+    idx = np.argsort(w_dists)
+    return idx, w_dists
+
+
+idx, wdists = sort_neurons_for_class(wasser_dists_values, 689)
+print(wdists[idx[:5]])
+
+x = loaded_activations.clone()
+x[:, idx[:16]] = 0
+x = model.fc(x)
+y_pred = torch.argmax(x, dim=1).detach().cpu().numpy()
+conf_matr = confusion_matrix(labels, y_pred)
+p, r = conf_matr.diagonal() / conf_matr.sum(axis=0), conf_matr.diagonal() / conf_matr.sum(axis=1)
+class_idx = 689
+print(precision_before[class_idx], p[class_idx])
+print(recall_before[class_idx], r[class_idx])
+'''

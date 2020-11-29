@@ -96,7 +96,7 @@ def get_loss(params):
                 if_weighted_ce = False
             elif weighted_ce_type == 'switch_freqs':
                 freqs = pd.read_csv('class_freqs.csv', header=None) #freq of true
-                if False:
+                if True: #changed from False when writing the thesis
                     weights = torch.exp(- torch.tensor(np.vstack((1 - np.array(freqs[1]), np.array(freqs[1])))).float().cuda())
                     # weights = torch.tensor(np.vstack((np.array(freqs[1]), 1 - np.array(freqs[1])))).float().cuda()
                 else:
@@ -118,12 +118,22 @@ def get_loss(params):
             loss_callable = nll
 
         for t in params['tasks']:
-            loss_fn[t] = lambda pred, gt: loss_callable(pred, gt, None if not if_weighted_ce else weights[:, int(t)])
+            loss_fn[t] = lambda pred, gt, weight=1: loss_callable(pred, gt, None if not if_weighted_ce else weight * weights[:, int(t)])
         return loss_fn
+
 
     if params['dataset'] in ['cifar10', 'cifar10_singletask', 'cifarfashionmnist',
                              'imagenette_singletask']:
         loss_fn = {}
         for t in params['tasks']:
             loss_fn[t] = nll
+        return loss_fn
+
+    if params['dataset'] in ['cifar10_singletask_6vsAll']:
+        loss_fn = {}
+        if_weighted_ce = params["weighted_ce"] == 'switch_freqs'
+        if if_weighted_ce:
+            weights = torch.tensor([1, 9]).float().cuda()
+        for t in params['tasks']:
+            loss_fn[t] = lambda pred, gt: nll(pred, gt, None if not if_weighted_ce else weights)
         return loss_fn

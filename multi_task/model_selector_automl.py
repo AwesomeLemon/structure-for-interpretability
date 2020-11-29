@@ -104,7 +104,7 @@ def get_model(params):
 
             model['rep'] = binmatr2_multi_faces_resnet.BinMatrResNet(block_to_use,
                                                                      [2, 2, 2, 2], params['chunks'],
-                                                                     width_mul, params['if_fully_connected'], False, 40,
+                                                                     width_mul, params['if_fully_connected'], 'celeba', 40,
                                                                      params['input_size'], aux_conns, if_enable_bias,
                                                                      replace_constants_last_layer_mode,
                                                                      replace_with_avgs_last_layer_mode)
@@ -205,11 +205,15 @@ def get_model(params):
         model['rep'].to(device)
         for t in params['tasks']:
             if (arc == 'binmatr2_resnet18') or (arc == 'binmatr2_resnet18_noskip'):
-                if not data == 'cifar10_singletask':
-                    model[t] = binmatr2_multi_faces_resnet.FaceAttributeDecoderCifar10()
-                else:
+                if data == 'cifar10_singletask':
                     dim = params['chunks'][-1]
                     model[t] = binmatr2_multi_faces_resnet.FaceAttributeDecoderCifar10SingleTask(dim)
+                elif data == 'cifar10_singletask_6vsAll':
+                    dim = params['chunks'][-1]
+                    model[t] = binmatr2_multi_faces_resnet.FaceAttributeDecoderCifar10SingleTask6vsAll(dim)
+                else:
+                    model[t] = binmatr2_multi_faces_resnet.FaceAttributeDecoderCifar10()
+
             model[t].to(device)
 
         return model

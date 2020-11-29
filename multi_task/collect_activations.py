@@ -31,7 +31,6 @@ import pandas as pd
 import scipy.stats
 from sklearn.metrics import balanced_accuracy_score, accuracy_score
 
-from multi_task.util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
 
 try:
     from multi_task import datasets
@@ -39,18 +38,23 @@ try:
     from multi_task.gan.change_attributes import AttributeChanger
     from multi_task.load_model import load_trained_model, eval_trained_model
     from multi_task.loaders.celeba_loader import CELEBA
+    from multi_task.util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
 except:
     import datasets
     from gan.attgan.data import CustomDataset
     # from gan.change_attributes import AttributeChanger
     from load_model import load_trained_model
     from loaders.celeba_loader import CELEBA
+    from util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
+
 from models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
 
 import glob
 from shutil import copyfile, copy
 import math
 import torch.nn.functional as F
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import cross_validate
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -167,28 +171,38 @@ class ActivityCollector():
         return activations
 
     def store_layer_activations_many(self, loader, target_layer_indices, if_average_spatial=True, out_path_postfix='',
-                                     if_save_separately=True):
-        target_layer_names = [layers[target_layer_idx].replace('_', '.') for target_layer_idx in target_layer_indices]
+                                     if_save_separately=True, if_store_labels=False, if_store_layer_names=False,
+                                     layer_list=layers, if_store_activations=True):
+        target_layer_names = [layer_list[target_layer_idx].replace('_', '.') for target_layer_idx in target_layer_indices]
         activations = {}
 
         def save_activation(activations, name, mod, inp, out):
-            if name in target_layer_names:
-                if if_average_spatial:
-                    cur_activations = out.mean(dim=(-1, -2)).detach().cpu().numpy()
-                else:
-                    cur_activations = out.detach().cpu().numpy()
-                if name in activations:
-                    cur_activations = np.append(activations[name], cur_activations, axis=0)
-                activations[name] = cur_activations
+            if if_average_spatial:
+                cur_activations = out.mean(dim=(-1, -2)).detach().cpu().numpy()
+            else:
+                cur_activations = out.detach().cpu().numpy()
+            # old version:
+            # if name in activations:
+            #     cur_activations = np.append(activations[name], cur_activations, axis=0)
+            # activations[name] = cur_activations
+            # new version:
+            if name not in activations:
+                activations[name] = [cur_activations]
+            else:
+                activations[name].append(cur_activations)
 
         hooks = []
         for name, m in self.feature_extractor.named_modules():
-            hooks.append(m.register_forward_hook(partial(save_activation, activations, name)))
+            if name in target_layer_names:
+                hooks.append(m.register_forward_hook(partial(save_activation, activations, name)))
 
+        labels = []
         with torch.no_grad():
             for i, batch_val in enumerate(loader):
-                if i % 10 == 0:
-                    print(i)
+                print(i)
+
+                if if_store_labels:
+                    labels += list(np.array(batch_val[-1]))
 
                 val_images = batch_val[0].cuda()
                 self.feature_extractor(val_images)
@@ -196,17 +210,26 @@ class ActivityCollector():
         for hook in hooks:
             hook.remove()
 
-        if if_save_separately:
-            for i, idx in enumerate(target_layer_indices):
-                if if_average_spatial:
-                    filename = f'activations_on_validation_{idx}{out_path_postfix}.npy'
+        if if_store_activations:
+            if if_save_separately:
+                if if_store_layer_names:
+                    raise NotImplementedError()
+                for i, idx in enumerate(target_layer_indices):
+                    if if_average_spatial:
+                        filename = f'activations_on_validation_{idx}{out_path_postfix}.npy'
+                    else:
+                        filename = f'activations_on_validation_preserved_spatial_{idx}{out_path_postfix}.npy'
+                    with open(filename, 'wb') as f:
+                        pickle.dump(np.vstack(activations[target_layer_names[i]]), f, protocol=4)
+            else:
+                if not if_store_layer_names:
+                    filename = 'representatives_kmeans14_50_alllayers.npy'
+                    np.save(filename, activations)
                 else:
-                    filename = f'activations_on_validation_preserved_spatial_{idx}{out_path_postfix}.npy'
-                with open(filename, 'wb') as f:
-                    pickle.dump(activations[target_layer_names[i]], f, protocol=4)
-        else:
-            filename = 'representatives_kmeans14_50_alllayers.npy'
-            np.save(filename, activations)
+                    filename = f'activations_on_validation_preserved_spatial_{out_path_postfix}.npy'
+                    np.save(filename, (target_layer_names, activations), allow_pickle=True)
+        if if_store_labels:
+            np.save(f'labels{out_path_postfix}.npy', labels)
 
         return activations
 
@@ -312,11 +335,14 @@ class ActivityCollector():
                             if key == 'rep': #only interested in tasks
                                 continue
                             out_t, _ = self.model[key](outs[task_cnt], None)
+                            n_classes = out_t.shape[1]
                             task_cnt += 1
+
                             out_t = torch.exp(out_t)
                             if if_save_argmax_labels:
                                 out_t = torch.argmax(out_t, dim=1)
-                            diff = out_t[:, 1] - out_t[:, 0]
+                            else:
+                                diff = out_t[:, 1] - out_t[:, 0]
                             for j in range(out_t.shape[0]):
                                 if key != 'all': # multi-task network
                                     if not if_sort_by_path:
@@ -324,11 +350,15 @@ class ActivityCollector():
                                     else:
                                         sorted_dict_per_layer_per_neuron['label'][int(key)][im_paths[j]] = diff[j].item()
                                 else: # single task network, e.g. a 10-class softmax
-                                    for k in range(out_t.shape[1]):
-                                        if not if_sort_by_path:
-                                            sorted_dict_per_layer_per_neuron['label'][k][out_t[j, k]] = im_paths[j]
+                                    for k in range(n_classes):
+                                        if not if_save_argmax_labels:
+                                            cur_value = out_t[j, k].item()
                                         else:
-                                            sorted_dict_per_layer_per_neuron['label'][k][im_paths[j]] = out_t[j, k].item()
+                                            cur_value = int(out_t[j] == k)
+                                        if not if_sort_by_path:
+                                            sorted_dict_per_layer_per_neuron['label'][k][cur_value] = im_paths[j]
+                                        else:
+                                            sorted_dict_per_layer_per_neuron['label'][k][im_paths[j]] = cur_value
                     else:
                         outs_softmaxed = torch.softmax(outs, dim=1)
                         if if_save_argmax_labels:
@@ -365,8 +395,8 @@ class ActivityCollector():
                                         if_plot_hist=False,individual_size=None, layer_list=layers_bn):
         assert (sorted_dict_path is None) or (df_path is None), 'choose one'
         if_used_df = df_path is not None
-        target_layer_names = [layer.replace('_', '.') for layer in layer_list] + ['label']
-        layers_local_var = layer_list + ['label']
+        target_layer_names = [layer.replace('_', '.') for layer in layer_list] #+ ['label']
+        layers_local_var = layer_list #+ ['label']
         if not if_used_df:
             sorted_dict_per_layer_per_neuron = defaultdict(lambda: dict(), np.load(sorted_dict_path, allow_pickle=True).item())
         else:
@@ -381,20 +411,23 @@ class ActivityCollector():
             ims = []
             for (value, path) in values_and_paths:
                 if True:
-                    path = str.replace(path, 'cifar10/my_imgs2', 'imagenette/my_imgs')
+                    # path = str.replace(path, 'cifar10/my_imgs2', 'imagenette/my_imgs')
+                    path = str.replace(path, 'cifar10/my_imgs2', 'cifar/my_imgs')
                 im = Image.open(path)
+                b, g, r = im.split()
+                im = Image.merge("RGB", (r, g, b))
                 value_str = f'{value:.6f}'#str(value)[:7]
                 # if (i == 12) and (neuron == 400):
                 #     print(value)
                 # if layers_local_var[i] == 'label':
                 #     value_str = str(value.item())[:7]
-                ImageDraw.Draw(im).text((0, 0), value_str, (255, 150, 100), font=font)
+                # ImageDraw.Draw(im).text((0, 0), value_str, (255, 150, 100), font=font)
                 if individual_size is not None:
                     im = im.resize((individual_size, individual_size), Image.ANTIALIAS)
                 ims.append(im)
             if if_plot_hist:
                 plt.tight_layout()
-                plt.figure(figsize=(1.6, 2.2))
+                # plt.figure(figsize=(1.6, 2.2))
                 proper_hist(np.array([k.item() for k in sorted_dict.keys()]), bin_size=0.01)
                 buf = io.BytesIO()
                 plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
@@ -417,14 +450,20 @@ class ActivityCollector():
             if not if_used_df:
                 for neuron, sorted_dict in sorted_dict_per_layer_per_neuron[target_layer_names[i]].items():
                     sorted_dict_list = list(sorted_dict.items())
-                    values_and_paths = list(reversed(sorted_dict_list[-n_save // 2:])) + sorted_dict_list[:n_save // 2 - int(if_plot_hist)]
+                    if n_save == 'all':
+                        values_and_paths = list(reversed(sorted_dict_list))
+                    else:
+                        values_and_paths = list(reversed(sorted_dict_list[-n_save // 2:])) + sorted_dict_list[:n_save // 2 - int(if_plot_hist)]
                     # values_and_paths = sorted_dict_list[:n_save]
                     plot_most_activating_ims(values_and_paths, if_plot_hist)
             else:
                 for row in df.loc[(df['layer_name'] == target_layer_names[i])].itertuples():
                     neuron = row[2]
                     values_and_paths_all = list(sorted(zip(row[3:], df.columns[2:])))
-                    values_and_paths = list(reversed(values_and_paths_all[-n_save // 2:])) + \
+                    if n_save == 'all':
+                        values_and_paths = list(reversed(values_and_paths_all))
+                    else:
+                        values_and_paths = list(reversed(values_and_paths_all[-n_save // 2:])) + \
                                        values_and_paths_all[:n_save // 2 - int(if_plot_hist)]
 
                     plot_most_activating_ims(values_and_paths, if_plot_hist)
@@ -560,8 +599,40 @@ class ActivityCollector():
                     # df_cond.loc['label', i
                 df_cond_addendum = pd.DataFrame(data, columns=['layer_name', 'neuron_idx'] + list(list(zip(*path_label_items))[0]))
                 df_cond = df_cond.append(df_cond_addendum)
+            elif dataset_type == 'broden_val': #there's a problem with names, but I think both broden and broden_val are actuall broden_train
+                # df_cond = pd.read_pickle('path_to_label_df_broden_train.pkl')
+                df_cond = pd.read_pickle('path_to_label_df_broden_train_all.pkl') # includes colour and material
+            # elif dataset_type == 'broden_val':
+            #     df_cond = pd.read_pickle('path_to_label_df_broden_val.pkl')
+            elif dataset_type in ['cifar_6vsAll', 'cifar']:
+                # need normal cifar dict because need all 10 labels
+                path_to_label_dict = np.load('path_to_label_dict_cifar_val.npy', allow_pickle=True).item()
+                df_cond = df.copy()
+                df_cond = df_cond.drop(df_cond.index[df_cond.layer_name == 'label'])  # remove label predictions, replace with true labels
+                path_label_items = list(path_to_label_dict.items())
+                path_label_items.sort(key=operator.itemgetter(0))
+                per_label_dict = defaultdict(list)
+                for path, label in path_label_items:
+                    for i in range(10):
+                        per_label_dict[i].append(1 if label == i else 0)
+                data = []
+                for i in range(10):
+                    data.append(['label', i, *per_label_dict[i]])
+                    # df_cond.loc['label', i
+                modify_path_lambda = lambda path:path
+                if dataset_type == 'cifar_6vsAll':
+                    modify_path_lambda = lambda path:path.replace('cifar', 'cifar_6vsAll')
+                df_cond_addendum = pd.DataFrame(data, columns=['layer_name', 'neuron_idx'] +
+                                  [modify_path_lambda(path) for path in list(zip(*path_label_items))[0]])
+                df_cond = df_cond.append(df_cond_addendum)
+
             else:
-                df_cond = pd.read_pickle('path_to_label_df_broden_train.pkl')
+                raise NotImplementedError()
+
+        # if dataset_type == 'broden_val':
+        #     print(df.columns)
+        #     clmns = [i.item() for i in df.columns[2:]]
+        #     df.columns = clmns
 
         selected_paths1_cache = {}
         selected_paths2_cache = {}
@@ -602,6 +673,9 @@ class ActivityCollector():
                         elif dataset_type=='cifar':
                             # title = cifarfashion_dict[idx]
                             title = cifar10_dict[idx]
+                        elif dataset_type=='cifar_6vsAll':
+                            # title = cifarfashion_dict[idx]
+                            title = cifar10_dict[idx]
                         elif dataset_type=='imagenette':
                             if idx > 9:
                                 dict_from_full_imagenet_idx = dict(zip([0, 217, 482, 491, 497, 566, 569, 571, 574, 701],range(10)))
@@ -628,6 +702,8 @@ class ActivityCollector():
                     print('continue1', idx)
                     continue
 
+                # xlim_right = 12
+                # bin_size = 0.08
                 if if_plot:
                     proper_hist(selected_values_list1, bin_size=bin_size, ax=axs[cond_i], xlim_left=xlim_left,
                             xlim_right=xlim_right,
@@ -704,7 +780,7 @@ class ActivityCollector():
                 ax[0].set_yticklabels(labels)
                 ax[0].set_xlim(-0.5, 0.5)
 
-                proper_hist(list(zip(*class_wd_pairs))[1],ax=ax[1], xlim_left=-0.5, xlim_right=0.5, bin_size=0.04)
+                proper_hist(np.array(list(zip(*class_wd_pairs))[1]),ax=ax[1], xlim_left=-0.5, xlim_right=0.5, bin_size=0.04)
                 ax[1].set_yscale('log')
                 ax[1].set_ylim(top=400)
                 # ax[1].hist(list(zip(*class_wd_pairs))[1])
@@ -712,6 +788,35 @@ class ActivityCollector():
                 plt.savefig(f'{out_path}/{title}.png', format='png', bbox_inches='tight', pad_inches=0)
                 if if_show:
                     plt.show()
+                plt.close()
+
+    def plot_overall_hists(self, df_path, out_dir, layer_list):
+        target_layer_names = [layer.replace('_', '.') for layer in layer_list]
+        Path(out_dir).mkdir(exist_ok=True)
+        chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
+        df = pd.read_pickle(df_path)
+        for target_layer_idx, target_layer_name in enumerate(target_layer_names):
+            for target_neuron in range(chunks[target_layer_idx]):
+                print(target_neuron)
+                plot_name = f'{target_layer_idx}_{target_neuron}'
+                selected_values_list = np.array(df.loc[(df['layer_name'] == target_layer_names[target_layer_idx]) &
+                                               (df['neuron_idx'] == target_neuron)].drop(['layer_name', 'neuron_idx'],
+                                                                                         axis=1)).flatten()
+                bin_size = 0.02
+                selected_values_max = selected_values_list.max()
+                selected_values_min = selected_values_list.min()
+                diff = selected_values_max - selected_values_min
+                if diff == 0.0:
+                    print(f'Useless neuron {target_layer_idx}_{target_neuron}')
+                    continue
+                while diff / bin_size < 30:
+                    bin_size /= 2
+                    print(f'New bin size: {bin_size}')
+                while diff / bin_size > 80:
+                    bin_size *= 2
+                    print(f'New bin size: {bin_size}')
+                proper_hist(selected_values_list, plot_name, bin_size=bin_size, xlim_left=0)
+                plt.savefig(f'{out_dir}/{plot_name}.png', format='png', bbox_inches='tight', pad_inches=0)
                 plt.close()
 
     def convert_label_dict_to_dataframe(self, path_to_label_dict, out_path, if_nonceleba=False):
@@ -778,6 +883,37 @@ class ActivityCollector():
         print(f'{target_layer_idx}_{target_neuron}: {cifar10_dict[cond_idx1]} vs {cifar10_dict[cond_idx2]}: ',
               cv_results['test_score'])
 
+    def assess_binary_separability_1vsAll_whole_network(self, df_path, df_labels_path, layer_list, n_classes, postfix):
+        target_layer_names = [layer.replace('_', '.') for layer in layer_list]
+        df = pd.read_pickle(df_path)
+        df_labels = pd.read_pickle(df_labels_path)
+        chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
+        res_data = []
+        for i, target_layer_name in enumerate(target_layer_names):
+            for target_neuron in range(chunks[i]):
+                print(i, target_neuron)
+                target_neuron_activations = np.array(df.loc[(df['layer_name'] == target_layer_name) &
+                                                       (df['neuron_idx'] == target_neuron)].drop(['layer_name', 'neuron_idx'],
+                                                                                                 axis=1))[0]
+                for class_ind in range(n_classes):
+                    if class_ind % 50 == 0:
+                        print(class_ind)
+                    labels1 = np.array(df_labels.loc[(df_labels['layer_name'] == 'label') & (df_labels['neuron_idx'] == class_ind)]
+                                       .drop(['layer_name', 'neuron_idx'], axis=1))[0]
+                    train_pos = target_neuron_activations[labels1 == 1]
+                    lbl_pos = np.array([1] * len(train_pos))
+                    train_neg = target_neuron_activations[labels1 != 1]
+                    lbl_neg = np.array([-1] * len(train_neg))
+                    train = np.hstack((train_pos, train_neg))
+                    lbl = np.hstack((lbl_pos, lbl_neg))
+
+                    clf = LogisticRegression(random_state=0, penalty='l2', class_weight="balanced")
+                    cv_results = cross_validate(clf, train.reshape(-1, 1), lbl, cv=5, scoring='balanced_accuracy')
+                    res_data.append([target_layer_name, target_neuron, class_ind, np.mean(cv_results['test_score'])])
+                    # print(i, target_neuron, class_ind, np.mean(cv_results['test_score']))
+            df_res = pd.DataFrame(res_data, columns=['layer_name', 'neuron_idx', 'class_idx', 'mean_balanced_acc'])
+            df_res.to_csv('binary_separability' + postfix + f'_{i}.csv')
+
 
     def compute_attr_hist_for_neuron_pandas_wrapper(self, loader, df_val_images_activations_path, target_dict,
                                                     out_dir_path, if_cond_label=False,
@@ -802,6 +938,10 @@ class ActivityCollector():
                         chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
                     elif used_neurons == 'resnet_quarter':
                         chunks = [16, 16, 16, 32, 32, 32, 32, 64, 64, 64, 64, 128, 128, 128, 128]
+                        # chunks = [16, 16, 16, 32, 32, 32, 32, 64, 64, 64, 64, 32, 32, 32, 32]
+                        # chunks = [8, 8, 8, 16, 16, 16, 16, 32, 32, 32, 32, 16, 16, 16, 16]
+                        # chunks = [8, 8, 8, 16, 16, 16, 16, 32, 32, 32, 32, 8, 8, 8, 8]
+                        # chunks = [8, 8, 8, 16, 16, 16, 16, 32, 32, 32, 32, 2, 2, 2, 2]
                     used_neurons = {}
                     for idx, ch in enumerate(chunks):
                         used_neurons[idx] = np.array(range(chunks[idx]))
@@ -822,12 +962,14 @@ class ActivityCollector():
             # cond_neurons = list(range(10))
             # cond_neurons = [0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
             # cond_neurons = list(range(1000))#[0, 217, 482, 491, 497, 566, 569, 571, 574, 701] + list(range(1, 10)) + list(range(901, 911))
-            cond_neurons = list(range(301))
+            # cond_neurons = list(range(301))
+            cond_neurons = list(range(1197))
+            # cond_neurons = list(range(10))
 
         if not os.path.exists(df_val_images_activations_path) or if_force_recalculate:
             if not os.path.exists(sorted_dict_path) or if_force_recalculate:
                 sorted_dict_per_layer_per_neuron = ac.find_highest_activating_images(loader, dataset_type=dataset_type,
-                                                                                     save_path=sorted_dict_path,
+                                                                                     save_path=None, #note that I decided not to save the dict. df should be enough
                                                                                      used_neurons=used_neurons,
                                                                                      if_sort_by_path=True,
                                                                                      if_dont_save=if_dont_save,
@@ -848,8 +990,9 @@ class ActivityCollector():
         for layer_idx, targets in target_dict.items():
             ac.compute_attr_hist_for_neuron_pandas(layer_idx, targets, 15, cond_neurons, if_cond_label, df,
                                                    out_dir_path, used_neurons, dataset_type, if_calc_wasserstein,
-                                                   offset, if_show, if_left_lim_zero, layer_list, if_plot,
-                                                   cond_neuron_lambda=lambda x: hypernym_idx_to_imagenet_idx[x])
+                                                   offset, if_show, if_left_lim_zero, layer_list, if_plot
+                                                   #,cond_neuron_lambda=lambda x: hypernym_idx_to_imagenet_idx[x]
+                                                  )
 
     def convert_sorted_dict_per_layer_per_neuron_to_dataframe(self, sorted_dict_per_layer_per_neuron, out_path=None):
         data = []
@@ -1251,6 +1394,7 @@ class ActivityCollector():
 
 
     def calc_gradients_wrt_output_whole_network_all_tasks(self, loader, out_path, if_pretrained_imagenet=False):
+        print("Warning! Assume that loader returns in i-th batch only instances of i-th class")
         # for model in self.model.values():
         #     model.zero_grad()
         #     model.eval()
@@ -1290,44 +1434,46 @@ class ActivityCollector():
         n_classes = 10
         if if_pretrained_imagenet:
             n_classes = 1000
+        iter_loader = iter(loader)
         for cond_idx in range(n_classes):
             print(cond_idx)
+            batch = next(iter_loader)
             cur_grads = defaultdict(lambda : defaultdict(list)) # layer -> neuron -> grads from every batch (i.e. 1 scalar per batch)
-            for batch in loader:
-                ims, labels = batch
-                mask = (labels == cond_idx)
-                ims_masked = ims[mask,...]
-                ims_masked = ims_masked.cuda()
-                out = self.feature_extractor(ims_masked)
-                if not if_pretrained_imagenet:
-                    #single-headed
-                    y = out[0]
-                    out_cond = self.model['all'].linear(y)
-                    out_cond[:, cond_idx].sum().backward()
-                else:
-                    out[:, cond_idx].sum().backward()
+            ims, labels = batch
+            mask = (labels == cond_idx)#(labels != cond_idx)#np.array([True] * len(labels))#
+            print(labels)
+            ims_masked = ims[mask,...]
+            ims_masked = ims_masked.cuda()
+            out = self.feature_extractor(ims_masked)
+            if not if_pretrained_imagenet:
+                #single-headed
+                y = out[0]
+                out_cond = self.model['all'].linear(y)
+                out_cond[:, cond_idx].sum().backward()
+            else:
+                out[:, cond_idx].sum().backward()
 
-                for layer_name in target_layer_names:
-                    print(layer_name)
-                    layer_grad = activations[layer_name].grad.detach().cpu()
-                    n_neurons = neuron_nums[target_layer_names.index(layer_name)]
-                    for target_neuron in range(n_neurons):
-                        cur_grad = layer_grad[:, target_neuron]
-                        try:
-                            cur_grad = cur_grad.mean(axis=(-1, -2))
-                        except:
-                            pass
-                        # cur_grad = np.sign(cur_grad)
-                        # cur_grad[cur_grad < 0] = 0
-                        cur_grad = cur_grad.mean().item()
-                        cur_grads[layer_name][target_neuron].append(cur_grad)
-                        if not if_already_saved_layer_names_and_neuron_indices:
-                            layer_names_for_pd.append(layer_name)
-                            neuron_indices_for_pd.append(target_neuron)
+            for layer_name in target_layer_names:
+                print(layer_name)
+                layer_grad = activations[layer_name].grad.detach().cpu()
+                n_neurons = neuron_nums[target_layer_names.index(layer_name)]
+                for target_neuron in range(n_neurons):
+                    cur_grad = layer_grad[:, target_neuron]
+                    try:
+                        cur_grad = cur_grad.mean(axis=(-1, -2))
+                    except:
+                        pass
+                    # cur_grad = np.sign(cur_grad)
+                    # cur_grad[cur_grad < 0] = 0
+                    cur_grad = cur_grad.mean().item()
+                    cur_grads[layer_name][target_neuron].append(cur_grad)
+                    if not if_already_saved_layer_names_and_neuron_indices:
+                        layer_names_for_pd.append(layer_name)
+                        neuron_indices_for_pd.append(target_neuron)
 
-                    activations[layer_name].grad.zero_()
+                activations[layer_name].grad.zero_()
 
-                if_already_saved_layer_names_and_neuron_indices = True # is set after the first batch of the first cond_idx
+            if_already_saved_layer_names_and_neuron_indices = True # is set after the first batch of the first cond_idx
 
             for layer_name in target_layer_names:
                 n_neurons = neuron_nums[target_layer_names.index(layer_name)]
@@ -1348,18 +1494,24 @@ class ActivityCollector():
         return df
 
     def correlate_grads_with_wass_dists_per_neuron(self, df_grads_path, out_path, wass_dists_path_prefix,
-                                                   if_replace_wass_dists_with_noise=False):
-        target_layer_names = [layer.replace('_', '.') for layer in layers_bn_afterrelu]
+                                                   if_replace_wass_dists_with_noise=False, target_indices=None):
+        layers = layers_bn_afterrelu
+        if if_pretrained_imagenet:
+            layers = layers_bn
+        target_layer_names = [layer.replace('_', '.') for layer in layers]
         neuron_nums = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
         df_grads = pd.read_pickle(df_grads_path)
         data_corrs = []
         if if_replace_wass_dists_with_noise:
             wasser_dists_np = np.random.laplace(0, 0.05, (10, 512))
         for i, layer_name in enumerate(target_layer_names):
+            if target_indices is not None:
+                if i not in target_indices:
+                    continue
             if not if_replace_wass_dists_with_noise:
                 wasser_dists = np.load(f'{wass_dists_path_prefix}_{i}.npy', allow_pickle=True).item()
                 wasser_dists_np = np.array(pd.DataFrame(wasser_dists))
-                # wasser_dists_np[wasser_dists_np < 0] = 0
+                # wasser_dists_np[wasser_dists_np > 0] = 0
             # else:
             #     if True:
             #         wasser_dists_np = np.random.laplace(0, 0.05, (10, neuron_nums[i]))
@@ -1431,7 +1583,7 @@ class ActivityCollector():
         plt.plot(x, means)
         stds = np.std(avg_corrs_per_run, axis=0)
         plt.fill_between(x, means-stds, means+stds, facecolor='orange')
-        plt.ylim(-1, 1)
+        plt.ylim(0, 1)
         plt.title('Average correlation of W.dists & gradients\n averaged over 5 runs\n ± 1 std')
         plt.xticks(x)
         plt.xlabel('Layer index')
@@ -1465,9 +1617,14 @@ class ActivityCollector():
                 # removed_conns[9] = [(142, 188), (216, 188)]
                 # removed_conns[10] = [(188, 104),(86, 104)]
                 # removed_conns['label'] = [(481, 3),(481, 7)]
-                # removed_conns[9] = [(216, 181)] #!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                removed_conns[9] = [#(216, 181)
+                                    (142, 188),
+                                    (216, 188),
+                                    (187, 86),
+                                    (224, 86)
+                                    ]
                 # removed_conns[10] = [(181, 279)]
-                # removed_conns[11] = [(28, 421)] + [(331, 392)] #didn't properly check (331, 392)
+                # removed_conns[11] = [(28, 421)] + [(331, 392)]
                 # removed_conns[12] = [(406, 204)]
                 # removed_conns['label'] = [  # (356, 9),
                 #     # (204, 9),
@@ -1478,9 +1635,11 @@ class ActivityCollector():
                 #     #  (400, 9),
                 #     #  (383, 9)
                 # ]
-                removed_conns['shortcut'][10] = [#(193, 125)
-                                                  (118, 125)
-                                                 ]
+                removed_conns['shortcut'][8] = [(86, 86)]
+                # removed_conns['shortcut'][10] = [#(193, 125)
+                #                                   (118, 125)
+                #                                  ]
+
             if False:
                 save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_avgadditives' + '.pkl'
                 try:
@@ -1506,6 +1665,7 @@ class ActivityCollector():
         else:
             im_size = (224, 224)
             trained_model = torchvision.models.__dict__['resnet18'](pretrained=True).to(device)
+            # trained_model = torchvision.models.__dict__['resnet34'](pretrained=True).to(device)
             return ActivityCollector(trained_model, im_size, use_my_model=False), None, None
 
 
@@ -1553,6 +1713,143 @@ class ActivityCollector():
     def calc_precision_recall_from_confusion_matr(conf_matr):
         return conf_matr.diagonal() / conf_matr.sum(axis=1), conf_matr.diagonal() / conf_matr.sum(axis=0)
 
+    def plot_hists_of_spatial_activations(self, path='activations_on_validation_preserved_spatial__bettercifar10single.npy',
+                                         out_path='hist_spatial_bettercifar10single', layer_list=layers_bn_afterrelu,
+                                         chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]):
+        Path(out_path).mkdir(exist_ok=True)
+        saved_layers, acts = np.load(path, allow_pickle=True)
+        target_layer_names = [layer.replace('_', '.') for layer in layer_list]
+        assert saved_layers == target_layer_names
+
+        for layer_idx, acts_for_layer in enumerate(acts.values()):
+            acts_for_layer_stacked = np.vstack(acts_for_layer)
+            for neuron_idx in range(chunks[layer_idx]):
+                print(neuron_idx)
+                proper_hist(acts_for_layer_stacked[:, neuron_idx], title=f'{layer_idx}_{neuron_idx}', if_determine_bin_size=True)
+                plt.savefig(f'{out_path}/{layer_idx}_{neuron_idx}.png', format='png', bbox_inches='tight', pad_inches=0)
+                plt.close()
+
+    def plot_hists_of_spatial_activations_no_save(self, loader, target_layer_indices,
+                                         out_path='hist_spatial_bettercifar10single', layer_list=layers_bn_afterrelu,
+                                         chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]):
+        target_layer_names = [layer_list[target_layer_idx].replace('_', '.') for target_layer_idx in target_layer_indices]
+        Path(out_path).mkdir(exist_ok=True)
+        zero_ratios_data = []
+
+        for layer_idx, layer_name in enumerate(target_layer_names):
+            activation_dict = self.store_layer_activations_many(loader, [layer_idx], if_average_spatial=False, if_store_activations=False,
+                                              layer_list=layer_list)
+            activations = np.vstack(activation_dict[layer_name])
+            n_total_feature_map_values = len(activations[:, 0].flatten())
+            for neuron_idx in range(chunks[layer_idx]):
+                print(neuron_idx)
+                n_zeros = np.sum(activations[:, neuron_idx].flatten() == 0)
+                ratio_zeros = n_zeros / n_total_feature_map_values
+                proper_hist(activations[:, neuron_idx], title=f'{layer_idx}_{neuron_idx}\n{ratio_zeros :.2f}',
+                            if_determine_bin_size=True)
+                plt.savefig(f'{out_path}/{layer_idx}_{neuron_idx}.png', format='png', bbox_inches='tight', pad_inches=0)
+                plt.close()
+                zero_ratios_data.append([layer_name, neuron_idx, ratio_zeros])
+            del activation_dict
+            del activations
+
+        df_zeros = pd.DataFrame(zero_ratios_data, columns=['layer_name', 'neuron_idx', 'ratio_zeros'])
+        df_zeros.to_pickle(out_path + '_ratio_zeros_df.pkl')
+
+
+    def store_highest_activating_patches(self, loader, target_layer_indices,
+                                         out_path='patches', layer_list=layers_bn_afterrelu,
+                                         chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512], n_save=64,
+                                         base_path='/mnt/raid/data/chebykin/imagenet_val/my_imgs', image_size = 32):
+        target_layer_names = [layer_list[target_layer_idx].replace('_', '.') for target_layer_idx in target_layer_indices]
+        Path(out_path).mkdir(exist_ok=True)
+        n_save_half = n_save // 2
+
+        def indices_to_patch_list(idx, base_path, patch_size, image_to_feature_ratio, anchors):
+            ims = []
+            for i, im_idx in enumerate(idx):
+                path = base_path + f'/{im_idx}.jpg'
+                im = Image.open(path)
+                im2arr = np.array(im) # h, w, c
+                # from bgr to rgb :
+                im2arr = im2arr[:, :, ::-1]
+
+                x, y = anchors[i]
+                x *= image_to_feature_ratio
+                y *= image_to_feature_ratio
+
+                patch_size_half = patch_size // 2
+
+                patch = im2arr[max(int(np.floor(x - patch_size_half)), 0): min(int(np.ceil(x+patch_size_half)), image_size),
+                        max(int(np.floor(y - patch_size_half)), 0): min(int(np.ceil(y+patch_size_half)), image_size)]
+
+                padded = np.zeros((patch_size, patch_size, 3))
+                padded_rgba = np.dstack((padded, np.zeros((patch_size, patch_size), dtype=np.uint8) + 255))
+                padded_rgba[:patch.shape[0], :patch.shape[1], :3] = patch
+                padded_rgba[patch.shape[0]:, :, 3] = 0
+                padded_rgba[:, patch.shape[1]:, 3] = 0
+                arr2im = Image.fromarray(np.uint8(padded_rgba))
+                ims.append(arr2im)
+            return ims
+
+        def vstack_fast(list_of_np_arrays):
+            total_samples = np.sum([a.shape[0] for a in list_of_np_arrays])
+            res = np.zeros((total_samples, list_of_np_arrays[0].shape[1], list_of_np_arrays[0].shape[2], list_of_np_arrays[0].shape[3]))
+            cur = 0
+            for ar in list_of_np_arrays:
+                for i in range(ar.shape[0]):
+                    res[cur] = ar[i]
+                    cur += 1
+            return res
+
+        for layer_idx, layer_name in zip(target_layer_indices, target_layer_names):
+            patch_size = 100
+            activation_dict = self.store_layer_activations_many(loader, [layer_idx], if_average_spatial=False, if_store_activations=False,
+                                              layer_list=layer_list)
+            activations = vstack_fast(activation_dict[layer_name])
+            image_to_feature_ratio = image_size / activations.shape[2]
+            for neuron_idx in range(chunks[layer_idx]):
+                print(neuron_idx)
+                cur_activations = activations[:, neuron_idx]
+
+                # cur_activations[cur_activations == 0] = 0.5
+
+                print(cur_activations.shape)
+
+                if True:
+                    cur_activations_mins = cur_activations.min(axis=(-1, -2))
+                    # cur_activations_mins = cur_activations.mean(axis=(-1, -2))
+                    idx_min = np.argpartition(cur_activations_mins, n_save_half)[:n_save_half]
+                    print(cur_activations_mins[idx_min])
+                    anchors_min = [np.unravel_index(cur_activations[i].argmin(), cur_activations[i].shape) for i in idx_min]
+                else:
+                    idx_min = np.argpartition(cur_activations[:, 2, 2], n_save_half)[:n_save_half]
+
+                    anchors_min = [(2, 2) for _ in idx_min]
+                # print([cur_activations[idx_min[i], am[0], am[1]] for i, am in enumerate(anchors_min)])
+
+                if True:
+                    cur_activations_maxs = cur_activations.max(axis=(-1, -2))
+                    # cur_activations_maxs = cur_activations.mean(axis=(-1, -2))
+                    idx_max = np.argpartition(cur_activations_maxs, -n_save_half)[-n_save_half:]
+                    print(cur_activations_maxs[idx_max])
+                    anchors_max = [np.unravel_index(cur_activations[i].argmax(), cur_activations[i].shape) for i in idx_max]
+                else:
+                    idx_max = np.argpartition(cur_activations[:, 2, 2], -n_save_half)[-n_save_half:]
+                    anchors_max = [(2, 2) for _ in idx_max]
+
+                ims_min = indices_to_patch_list(idx_min, base_path, patch_size, image_to_feature_ratio, anchors_min)
+                ims_max = indices_to_patch_list(idx_max, base_path, patch_size, image_to_feature_ratio, anchors_max)
+
+                # print([cur_activations[idx_max[i], am[0], am[1]] for i, am in enumerate(anchors_max)])
+
+                new_im = images_list_to_grid_image(ims_max + ims_min, if_rgba=True, if_draw_line=True)
+                new_im.save(out_path + '/' + f'{layer_idx}_{neuron_idx}.png')
+                # break
+
+            del activation_dict
+            del activations
+
 if __name__ == '__main__':
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_21_on_November_27/optimizer=Adam|batch_size=256|lr=0.0005|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3___0.025|__4___0._1_model.pkl'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_53_on_February_11/optimizer=Adam|batch_size=256|lr=0.005|lambda_reg=0.005|chunks=[4|_4|_4]|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025_42_model.pkl'
@@ -1585,6 +1882,9 @@ if __name__ == '__main__':
     # hat only:
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_56_on_September_09/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._67_model.pkl'
     # param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_wearinghatonly_weightedce.json'
+    # bangs only:
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_23_on_September_10/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._120_model.pkl'
+    param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_bangsonly_weightedce.json'
     # multi-head cifar:
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_18_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4.json'
@@ -1619,13 +1919,35 @@ if __name__ == '__main__':
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
     #  single-head cifar 5
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    # param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
     # imagenette
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_19_on_October_13/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
     # param_file = 'params/binmatr2_imagenette_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    # cifar 6vsAll
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_01_on_October_29/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask_6vsAll.json'
+    # cifar quarter-width
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_05_on_November_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0.0003|con_240_model.pkl'
+    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask_quarterwidth.json'
+    # cifar quarter-width layer4narrow
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_56_on_November_09/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_32|_32|_32|_32]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0.0003|connect_240_model.pkl'
+    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask_quarterwidth_layer4narrow.json'
+    # cifar eights-width layer4narrow
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/15_15_on_November_09/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[8|_8|_8|_16|_16|_16|_16|_32|_32|_32|_32|_16|_16|_16|_16]|architecture=binmatr2_resnet18|width_mul=0.125|weight_decay=0.0003|connectiv_240_model.pkl'
+    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask_eightswidth_layer4narrow.json'
+    # cifar eights-width layer4narrowER
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/15_17_on_November_09/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[8|_8|_8|_16|_16|_16|_16|_32|_32|_32|_32|_8|_8|_8|_8]|architecture=binmatr2_resnet18|width_mul=0.125|weight_decay=0.0003|connectivitie_240_model.pkl'
+    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask_eightswidth_layer4narrower.json'
+    # cifar eights-width layer4narrowER yet - 2 neurons
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/19_39_on_November_09/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[8|_8|_8|_16|_16|_16|_16|_32|_32|_32|_32|_2|_2|_2|_2]|architecture=binmatr2_resnet18|width_mul=0.125|weight_decay=0.0003|connectivitie_216_model.pkl'
+    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask_eightswidth_layer4narrower2.json'
+    # cifar full-width, but 1 neuron in layer41
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_22_on_November_09/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_1|_1|_1|_1]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0003|connec_240_model.pkl'
+    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask_layer4narrower1.json'
 
-    if_pretrained_imagenet = True
+
+    if_pretrained_imagenet = False
     ac, params, configs = ActivityCollector.create_activity_collector(save_model_path, param_file, if_pretrained_imagenet)
 
     model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
@@ -1636,6 +1958,7 @@ if __name__ == '__main__':
         with open('configs.json') as config_params:
             configs = json.load(config_params)
         params['dataset'] = 'imagenet_val'
+        # params['dataset'] = 'imagenet_test'
         params['batch_size'] = 256#320
     print(model_name_short)
     # ac.compare_AM_images(31, 12)
@@ -1665,10 +1988,13 @@ if __name__ == '__main__':
 
     # ac.store_highest_activating_images()
     plt.rcParams.update({'font.size': 16})
-    params['batch_size'] = 50001#26707#11246#1251#10001#
+    # params['batch_size'] = 1000/4#50/4#26707#11246#1251#10001#
     # params['dataset'] = 'broden_val'
-    _, loader, _ = datasets.get_dataset(params, configs)
+    _, val_loader, tst_loader = datasets.get_dataset(params, configs)
+    loader = val_loader
+
     # store_path_and_label_df_broden(loader, 'path_to_label_df_broden_train.pkl')
+    # store_path_and_label_df_broden(loader, 'path_to_label_df_broden_train_all.pkl') #includes color and material
     # exit()
     # conf_matr1 = ac.eval_with_neuron_replaced(params, loader, 8, 0, 0)
     # prec1, rec1 = ac.calc_precision_recall_from_confusion_matr(conf_matr1)
@@ -1682,6 +2008,18 @@ if __name__ == '__main__':
     #                                    df_path='nonsparse_afterrelu.pkl')
     # ac.store_highest_activating_images('highest_activating_ims_bn_cifar10single_sparse2',
     #                                    df_path='sparse2_afterrelu_cifar.pkl')
+    # ac.store_highest_activating_images('highest_activating_ims_bn_cifar10single_rgb',
+    #                                    df_path='bettercifar10single_nonsparse_afterrelu.pkl', n_save=20)
+    # ac.store_highest_activating_images('highest_activating_ims_imagenet_afterrelu_many',
+    #                                    df_path='pretrained_imagenet_afterrelu.pkl', n_save=64, layer_list=layers_bn_afterrelu)
+    # ac.store_highest_activating_images('highest_activating_ims_cifar_layer4narrower1_afterrelu',
+    #                                    df_path='cifar_layer4narrower1_lbl_afterrelu.pkl', n_save='all', layer_list=layers_bn_afterrelu)
+    # ac.assess_binary_separability_1vsAll_whole_network('bettercifar10single_nonsparse_afterrelu.pkl', 'df_label_cifar.pkl',
+    #                                                    layers_bn, 10, postfix='_cifar')
+    # convert_imagenet_path_to_label_dict_to_df()
+    # ac.assess_binary_separability_1vsAll_whole_network('pretrained_imagenet_afterrelu.pkl', 'df_label_imagenet_val.pkl',
+    #                                                    layers_bn_afterrelu, 1000, postfix='_imagenet_val')
+    # ac.plot_overall_hists('pretrained_imagenet_afterrelu.pkl', 'overall_hists_imagenet_afterrelu', layers_bn)
     # exit()
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single_noskip_nonsparse_afterrelu.pkl',
     #                                                {10:'all', 9:'all', 8:'all', 7:'all', 6:'all', 5:'all', 4:'all', 3:'all', 2:'all', 1:'all', 0:'all'},
@@ -1702,13 +2040,13 @@ if __name__ == '__main__':
     #                                                if_nonceleba=True,
     #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_sparse2cifar.npy',
     #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False)
-    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'sparse2_afterrelu_cifar_TEMP.pkl', {12: [125]},
-    #                                                'TEMP', if_cond_label=False,
-    #                                                used_neurons=f'actually_good_nodes_{model_name_short}.npy',
-    #                                                if_nonceleba=True,
-    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_sparse2cifar_TEMP.npy',
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'sparse2_afterrelu_cifar_TEMP2.pkl', {12: [125]},
+    #                                                'TEMP2', if_cond_label=False,
+    #                                                used_neurons='resnet_full',
+    #                                                dataset_type='cifar',
+    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_sparse2cifar_TEMP2.npy',
     #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=True,
-    #                                                if_force_recalculate=True, if_dont_save=True)
+    #                                                if_force_recalculate=True, if_dont_save=False)
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'prerelu_imagenette_TEMP.pkl', {14:[112]},
     #                                                'TEMP', if_cond_label=False,
     #                                                used_neurons='use_target',
@@ -1717,14 +2055,14 @@ if __name__ == '__main__':
     #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False,
     #                                                if_force_recalculate=True, if_dont_save=True, if_left_lim_zero=False,
     #                                                layer_list=layers_bn_prerelu)
-    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'pretrained_imagenet_broden2_afterrelu.pkl', {13: [101]},
-    #                                                'attr_hist_pretrained_imagenet_broden2_afterrelu', if_cond_label=True,
-    #                                                used_neurons='use_target',
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'pretrained_imagenet_broden3_afterrelu.pkl', 'all_network',
+    #                                                'attr_hist_pretrained_imagenet_broden3_afterrelu', if_cond_label=True,
+    #                                                used_neurons='resnet_full',
     #                                                dataset_type='broden_val',
-    #                                    sorted_dict_path='img_paths_most_activating_sorted_dict_paths_pretrained_imagenet_broden2_afterrelu.npy',
+    #                                    sorted_dict_path='img_paths_most_activating_sorted_dict_paths_pretrained_imagenet_broden3_afterrelu.npy',
     #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
-    #                                                if_force_recalculate=True, if_dont_save=False, if_left_lim_zero=True,
-    #                                                layer_list=layers_bn, if_plot=False)
+    #                                                if_force_recalculate=False, if_dont_save=False, if_left_lim_zero=True,
+    #                                                layer_list=layers_bn_afterrelu, if_plot=False)
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'pretrained_imagenet_afterrelu_l8.pkl', {8:list(range(256))},
     #                                                'attr_hist_pretrained_imagenet_afterrelu_l8', if_cond_label=False,
     #                                                used_neurons='use_target',
@@ -1733,28 +2071,79 @@ if __name__ == '__main__':
     #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
     #                                                if_force_recalculate=True, if_dont_save=False, if_left_lim_zero=True,
     #                                                layer_list=layers_bn, if_plot=False)
-    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'pretrained_imagenet_afterrelu.pkl', {13:[18, 95, 101,
-    #                                                                                                173, 202, 307, 409]},
-    #                                                'attr_hist_pretrained_imagenet_afterrelu_HYPE', if_cond_label=False,
-    #                                                used_neurons='use_target',
-    #                                                dataset_type='imagenet_val',
-    #                                 sorted_dict_path='img_paths_most_activating_sorted_dict_paths_pretrained_imagenet_afterrelu.npy',
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'pretrained_imagenet_afterrelu_test.pkl', 'all_network',
+    #                                                'attr_hist_pretrained_imagenet_afterrelu_test', if_cond_label=False,
+    #                                                used_neurons='resnet_full',
+    #                                                dataset_type='imagenet_test',
+    #                                 sorted_dict_path='img_paths_most_activating_sorted_dict_paths_pretrained_imagenet_afterrelu_test.npy',
     #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
     #                                                if_force_recalculate=False, if_dont_save=False, if_left_lim_zero=True,
-    #                                                layer_list=layers_bn, if_plot=False)
-    # ac.wasserstein_barplot('attr_hist_pretrained_imagenet_afterrelu_HYPE', {13:[18, 95, 101, 173, 202, 307, 409]},
-    #                        hypernym_dict, n_show=20, out_path_suffix='_HYPE_TMP')
+    #                                                layer_list=layers_bn_afterrelu, if_plot=False)
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'cifar10_6vsAll_afterrelu.pkl', 'all_network',
+    #                                                'attr_hist_cifar10_6vsAll_afterrelu', if_cond_label=True,
+    #                                                used_neurons='resnet_full',
+    #                                                dataset_type='cifar_6vsAll',
+    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_cifar10_6vsAll.npy',
+    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False,
+    #                                                if_force_recalculate=False, if_dont_save=False, if_left_lim_zero=True,
+    #                                                layer_list=layers_bn_afterrelu, if_plot=True)
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'cifar_eightswidth_layer4narrower2_afterrelu.pkl', 'all_network',
+    #                                                'attr_hist_cifar_eightswidth_layer4narrower2_afterrelu', if_cond_label=False,
+    #                                                used_neurons='resnet_quarter',
+    #                                                dataset_type='cifar',
+    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_cifar_eightswidth_layer4narrower2.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
+    #                                                if_force_recalculate=True, if_dont_save=False, if_left_lim_zero=True,
+    #                                                layer_list=layers_bn_afterrelu, if_plot=True)
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'cifar_layer4narrower1_lbl_afterrelu.pkl',
+    #                                                {14:[0], 13:[0], 12:[0], 11:[0]},
+    #                                                'attr_hist_cifar_layer4narrower1_lbl_afterrelu', if_cond_label=True,
+    #                                                used_neurons='use_target',
+    #                                                dataset_type='cifar',
+    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_cifar_layer4narrower1_lbl.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
+    #                                                if_force_recalculate=False, if_dont_save=False, if_left_lim_zero=True,
+    #                                                layer_list=layers_bn_afterrelu, if_plot=True)
+    # chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
+    # ac.wasserstein_barplot('attr_hist_pretrained_imagenet_prerelu', dict(zip(range(15), [range(c) for c in chunks])),
+    #                        imagenet_dict, n_show=20, out_path_suffix='')
+    # ac.wasserstein_barplot('attr_hist_pretrained_imagenet_broden3_afterrelu', dict(zip(range(15), [range(c) for c in chunks])),
+    #                        broden_categories_list, n_show=20, out_path_suffix='')
+
+    # ac.store_layer_activations_many(loader, [14], if_average_spatial=True, if_store_labels=True, out_path_postfix='_pretrained_imagenet')
+    # ac.store_layer_activations_many(loader, list(range(15)), out_path_postfix='_bettercifar10single',
+    #                                 layer_list=layers_bn_afterrelu, if_store_labels=False,
+    #                                 if_store_layer_names=True, if_average_spatial=False, if_save_separately=False)
+    # chunks = [16, 16, 16, 32, 32, 32, 32, 64, 64, 64, 64, 32, 32, 32, 32]
+    # chunks = [8, 8, 8, 16, 16, 16, 16, 32, 32, 32, 32, 16, 16, 16, 16]
+    # ac.store_layer_activations_many(loader, list(range(15)), out_path_postfix='cifar_eightswidth_layer4narrow',
+    #                                 layer_list=layers_bn_afterrelu, if_store_labels=False,
+    #                                 if_store_layer_names=True, if_average_spatial=False, if_save_separately=False)
+    # ac.plot_hists_of_spatial_activations(path='activations_on_validation_preserved_spatial_cifar_eightswidth_layer4narrow.npy',
+    #                                      out_path='hist_spatial_cifar_eightswidth_layer4narrow', layer_list=layers_bn_afterrelu,
+    #                                      chunks=chunks)
+    # ac.plot_hists_of_spatial_activations_no_save(loader, list(range(15)),
+    #                                      out_path='hist_spatial_cifar_bettercifar10single_zeros', layer_list=layers_bn_afterrelu)
+    # ac.plot_hists_of_spatial_activations_no_save(loader, list(range(15)),
+    #                                              out_path='hist_spatial_imagenet_r34_afterrelu',
+    #                                              layer_list=layers_bn_afterrelu, chunks=chunks)
+    # ac.store_highest_activating_patches(loader, [0], out_path='patches_bettercifar10single',
+    #                                     base_path='/mnt/raid/data/chebykin/cifar/my_imgs',
+    #                                     image_size=32)
+    # ac.store_highest_activating_patches(loader, [10], out_path='patches_imagenet',
+    #                                     base_path='/mnt/raid/data/chebykin/imagenet_val/my_imgs',
+    #                                     image_size=224)
     # exit()
-    ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'grads_{model_name_short}.pkl', if_pretrained_imagenet)
+    # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'grads_test_{model_name_short}.pkl', if_pretrained_imagenet)
     # if True:
-    #     ac.correlate_grads_with_wass_dists_per_neuron(f'grads_{model_name_short}.pkl',
-    #                                                   f'corr_grads_{model_name_short}.pkl',
-    #                                        'wasser_dists/wasser_dist_attr_hist_bettercifar10single5',
+    #     ac.correlate_grads_with_wass_dists_per_neuron(f'grads_test_{model_name_short}.pkl',
+    #                                                   f'corr_grads_test_{model_name_short}.pkl',
+    #                                        'wasser_dists/wasser_dist_attr_hist_bettercifar10single',
     #                                                   if_replace_wass_dists_with_noise=False)
     # else:
     #     ac.correlate_grads_with_wass_dists_per_task(f'grads_{model_name_short}.pkl', f'corr_task_grads_{model_name_short}.pkl',
     #                                                   'wasser_dist_attr_hist_bettercifar10single')
-    # ac.plot_correlation_of_grads_with_wass_dists(f'corr_grads_{model_name_short}.pkl')
+    # ac.plot_correlation_of_grads_with_wass_dists(f'corr_grads_test_{model_name_short}.pkl')
 
     # ac.plot_correlation_of_grads_with_wass_dists_many_runs([
     #     f'corr_grads_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in [
@@ -1765,7 +2154,7 @@ if __name__ == '__main__':
     #         r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
     #     ]
     # ])
-    exit()
+    # exit()
     #
     # grads_per_neuron = {}
     # layer = 12
@@ -1865,7 +2254,7 @@ if __name__ == '__main__':
     # ac.store_highest_activating_images('highest_activating_ims_imagenette_neg',
     #                                    df_path='imagenette_neg_nonsparse_afterrelu.pkl', individual_size=224,
     #                                    layer_list=layers_bn_prerelu)
-    exit()
+    # exit()
 
     # ac.assess_binary_separability('nonsparse_afterrelu_bettercifar.pkl', 'df_label_cifar.pkl', 14, 12, 7, 8)
     # ac.assess_binary_separability('nonsparse_afterrelu_bettercifar.pkl', 'df_label_cifar.pkl', 14, 12, 0, 9)
@@ -1932,16 +2321,15 @@ if __name__ == '__main__':
     #                                                if_nonceleba=False,
     #                                                sorted_dict_path=None)
     #
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_23_on_September_10/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._120_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_bangsonly_weightedce.json'
-    # ac, params, configs = ActivityCollector.create_activity_collector(save_model_path, param_file)
-    # _, loader, _ = datasets.get_dataset(params, configs)
-    # model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
-    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bangsonly_nonsparse_afterrelu.pkl', 'all_network',
-    #                                                'attr_hist_bangsonly', if_cond_label=True,
-    #                                                used_neurons='resnet_quarter',
-    #                                                if_nonceleba=False,
-    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bangsonly.npy')
+    ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bangsonly_nonsparse_afterrelu2.pkl', {14:'all'},
+                                                   'attr_hist_bangsonly2', if_cond_label=True,
+                                                   used_neurons='resnet_quarter',
+                                                   dataset_type='celeba',
+                                                   sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bangsonly2.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False,
+                                                   if_force_recalculate=True,
+                                                   if_left_lim_zero=True, layer_list=layers_bn_afterrelu
+                                                   )
 
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_32_on_September_14/optimizer=SGD|batch_size=256|lr=0.005|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0_66_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgd005bias_fc.json'
@@ -1984,7 +2372,7 @@ if __name__ == '__main__':
     # # ac.compute_attr_hist_for_neuron(14, list(range(1, 64)), 15, list(range(40)), if_cond_labels=True)
     # # sorted_dict_per_layer_per_neuron = np.load('img_paths_most_activating_sorted_dict_afterrelu_fcmodel.npy',
     # #                                            allow_pickle=True).item()
-    # exit()
+    exit()
     # for i in range(15):
     #     # ac.compute_attr_hist_for_neuron(i, 'all', 15, list(range(40)), lambda v, p, i: v < 0, False,
     #     #                             sorted_dict_per_layer_per_neuron)
@@ -1992,10 +2380,11 @@ if __name__ == '__main__':
     #                                 out_dir='attr_hist_for_neuron_fc_normed', used_neurons=used_neurons)
     # # ac.compute_attr_hist_for_neuron(14, 'all', 15, list(range(40)), lambda v, p, i: v < 0, True,
     # #                                 used_neurons=used_neurons, out_dir='attr_hist_for_neuron_hatonly')
-    exit()
+    # exit()
+
     # ims = ac.get_images_open_mouth_nonblond(configs)
 
-    # experiment_name = 'black_hair_closed_mouth'
+    experiment_name = 'black_hair_closed_mouth'
     # experiment_name = 'black_hair_open_mouth'
     # experiment_name = 'black_hair_open_mouth_female'
     # experiment_name = 'black_hair_nonsmiling'
@@ -2007,7 +2396,7 @@ if __name__ == '__main__':
     # experiment_name = 'blond_hair_smiling'
 
     # experiment_name = 'brown_hair_nonsmiling'
-    experiment_name = 'brown_hair_smiling'
+    # experiment_name = 'brown_hair_smiling'
 
     # experiment_name = 'bald_smile_opened_mouth'
 
@@ -2016,9 +2405,10 @@ if __name__ == '__main__':
     #                                1700, f'{experiment_name}.npy')
 
     img_paths, labels = np.load(f'{experiment_name}.npy', allow_pickle=True)
-    # img_paths = img_paths[:1450]
-    # labels = labels[:1450]
+    img_paths = img_paths[:1450]
+    labels = labels[:1450]
     # img_paths = np.array(sorted(glob.glob(f'/mnt/raid/data/chebykin/pycharm_project_AA/black_hair_closed_mouth_relgan1_reversed/*')))
+    # img_paths = np.array([f'/mnt/raid/data/chebykin/pycharm_project_AA/black_hair_closed_mouth_relgan6/{i}.jpg' for i in range(1450)])
     # dataset = CustomDataset(img_paths, [-17] * len(img_paths), lambda img: ac.img_from_np_to_torch(np.asarray(img))[0],lambda x: -17)
     # loader = data.DataLoader(dataset, batch_size=1, num_workers=1, shuffle=False, drop_last=False)
     # for idx, (img, lbl) in enumerate(loader):
@@ -2027,10 +2417,10 @@ if __name__ == '__main__':
 
     # gan_path = 'gans/384_shortcut1_inject0_none_hq/checkpoint/weights.149.pth'
     # postfix = '_attgan'
-    gan_path = f'/mnt/raid/data/chebykin/pycharm_project_AA/gans/pretrained_relgan/generator519.h5'
-    postfix = '_relgan0'
+    # gan_path = f'/mnt/raid/data/chebykin/pycharm_project_AA/gans/pretrained_relgan/generator519.h5'
+    # postfix = '_relgan0'
     # gan_path = f'/mnt/raid/data/chebykin/pycharm_project_AA/gans/model/generator1400.h5' #this is the one that works
-    # postfix = '_relgan1'
+    # postfix = '_relgan1' + '_makehairblacker'
     # gan_path = f'/mnt/raid/data/chebykin/pycharm_project_AA/gans/model2/generator600.h5'
     # postfix = '_relgan2'
     # gan_path = f'/mnt/raid/data/chebykin/pycharm_project_AA/gans/model_40attr/generator186.h5'
@@ -2038,29 +2428,33 @@ if __name__ == '__main__':
     # gan_path = f'/mnt/raid/data/chebykin/pycharm_project_AA/gans/model_40attr_cont/generator7.h5'
     # postfix = '_relgan3'
     # gan_path = f'/mnt/raid/data/chebykin/pycharm_project_AA/gans/model_18attr_cont/generator145.h5'
-    # postfix = '_relgan5'
+    # postfix = '_relgan5' + '_openmouthandsmile'
+    gan_path = f'/mnt/raid/data/chebykin/pycharm_project_AA/gans/model_18attr2/generator568.h5' #543, 522
+    postfix = '_relgan6' #+ '_reversed' # + '_donothing'
 
     if False:
         # attribute_changer = AttributeChanger('AttGAN', gan_path, 'gans/384_shortcut1_inject0_none_hq/setting.txt',
         #                                      'close_mouth', experiment_name)
         # attribute_changer.generate(img_paths, labels)
         attribute_changer = AttributeChanger('RelGAN', gan_path,
-                                             out_path=experiment_name + postfix)  # '/mnt/raid/data/chebykin/pycharm_project_AA/black_hair_closed_mouth_relgan1_reversed2')
+                                             out_path=experiment_name + postfix)
+        # '/mnt/raid/data/chebykin/pycharm_project_AA/black_hair_closed_mouth_relgan1_reversed2')
         attribute_changer.generate(img_paths, labels, kwargs={
-            'Smiling': -1})  # need to pass labels just to peacify CustomDataset; don't really need them
+            'Mouth_Slightly_Open':-1})  # need to pass labels just to peacify CustomDataset; don't really need them
         # attribute_changer.generate(img_paths, labels, kwargs={'Black_Hair':-1, 'Blond_Hair':1, 'Eyeglasses':1}) # need to pass labels just to peacify CustomDataset; don't really need them
-        exit()
+        exit() # can't properly free memory, and Torch crashes in the next lines => can just as well exit myself
 
     if True:
         n_pics_total = len(img_paths)
-        n_pics_to_use = n_pics_total  # min(n_pics_total, 1450)
+        n_pics_to_use = min(n_pics_total, 1450)#n_pics_total  #
         # idx = np.random.choice(n_pics_total, size=n_pics_to_use, replace=False)
         probs_before = np.array(ac.get_output_probs_many_images(img_paths, True))
-        probs_after = np.array(
-            ac.get_output_probs_many_images([f'./{experiment_name}{postfix}/{i}.jpg' for i in range(n_pics_to_use)],
-                                            True))
+        # probs_after = np.array(
+        #     ac.get_output_probs_many_images([f'./{experiment_name}{postfix}/{i}.jpg' for i in range(n_pics_to_use)],
+        #                                     True))
         # probs_after = np.array(ac.get_output_probs_many_images(np.array(sorted(glob.glob(f'./{experiment_name}{postfix}/*'))), True))
-        # probs_after = np.array(ac.get_output_probs_many_images(np.array(sorted(glob.glob(f'/mnt/raid/data/chebykin/pycharm_project_AA/black_hair_closed_mouth_relgan1_reversed2/*')))[idx], True))
+        probs_after = np.array(ac.get_output_probs_many_images(np.array([
+            f'/mnt/raid/data/chebykin/pycharm_project_AA/black_hair_closed_mouth_relgan6_reversed/{i}.jpg' for i in range(n_pics_to_use)]), True))
         # print(probs_before.std(axis=0))
         # print(probs_after.std(axis=0))
         pb = probs_before.mean(axis=0)
@@ -2090,7 +2484,7 @@ if __name__ == '__main__':
         ax.legend()
         plt.show()
 
-        if False:
+        if True:
             _, axs = plt.subplots(5, 8, figsize=(20, 12))
             for i in range(40):
                 data = probs_after[:, i] - probs_before[:, i]

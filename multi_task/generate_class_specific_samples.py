@@ -28,7 +28,7 @@ from siren import SirenNet
 import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+size_multiplier = 1#6
 
 def rfft2d_freqs(h, w):
     """Computes 2D spectrum frequencies."""
@@ -44,7 +44,8 @@ def rfft2d_freqs(h, w):
 
 class ClassSpecificImageGenerator():
     def __init__(self, model, target, im_size, batch_size=1, use_my_model=True, hook_dict=None,
-                 diversity_layer_name=None, force_rep_indices=[], if_cppn=False, if_cifar=False, if_imagenette=False):
+                 diversity_layer_name=None, force_rep_indices=[], if_cppn=False, if_cifar=False, if_imagenette=False,
+                 tensor_loss_mul=1):
         self.target_layer_name, self.neuron_idx = target
 
         self.model = model
@@ -57,6 +58,7 @@ class ClassSpecificImageGenerator():
 
         self.batch_size = batch_size
         self.execute_trunk = lambda img: self.feature_extractor(img)
+        self.tensor_loss_mul = tensor_loss_mul
 
         if self.use_my_model:
             self.means = torch.tensor([0.38302392, 0.42581415, 0.50640459]).to(device)
@@ -139,10 +141,16 @@ class ClassSpecificImageGenerator():
                         self.get_probs = lambda img, trunk_features: torch.nn.functional.softmax(
                             self.classifier.linear(trunk_features[0]), dim=1)[:, target_class].mean().item()
             else:
-                self.get_target_tensor = lambda img, _: self.hook_dict[self.target_layer_name].features[:,
+                if True:
+                    self.get_target_tensor = lambda img, _: self.hook_dict[self.target_layer_name].features[:,
                                                         self.neuron_idx].mean()
+                else:
+                    #optimize only for center neuron instead of the whole feature map
+                    self.get_target_tensor = lambda img, _: self.hook_dict[self.target_layer_name].features[:,
+                                                            self.neuron_idx][
+                        :, self.hook_dict[self.target_layer_name].features.shape[-2] // 2,
+                            self.hook_dict[self.target_layer_name].features.shape[-1] // 2]
                 self.get_probs = lambda x, y: None
-
         else:
             model.eval()
             self.feature_extractor = self.model
@@ -154,13 +162,17 @@ class ClassSpecificImageGenerator():
         def inner_calculate_loss_f(self, image_transformed, trunk_features, n_step):
             output = self.get_target_tensor(image_transformed, trunk_features)
             target_weight = 2
-            class_loss = --output * target_weight \
-                         + 60e-9 * 30000 * 0.0005 ** 3 * torch.norm(self.image_transformed, 1) \
-                         + 3e-8 * 45000 *1.5 * 0.0001 * 0.001 ** 1.5 * total_variation_loss(self.image_transformed, 2) \
+            tensor_loss = -output * target_weight * self.tensor_loss_mul
+            class_loss = tensor_loss \
+                         + 1e4 * 1e-10 * (10e5 * 60e-9 * 30000) ** 1 * 0.0005 ** 3 * torch.norm(self.image_transformed, 1) \
+                         + 1e-4 * 1e3 ** 0 * 4 ** 0 * (10e7 * 3e-8 * 45000 *1.5) ** 0 * 0.0001 * 0.001 ** 1.5 * total_variation_loss(self.image_transformed, 2) \
                 # - 10* punish_outside_center(self.image_transformed)
 
             if n_step % 60 == 0:
-                print('Prob = ', self.get_probs(image_transformed, trunk_features))
+                probs = self.get_probs(image_transformed, trunk_features)
+                if probs is not None:
+                    print('Prob = ', probs)
+                print('Loss without regularization = ', tensor_loss.item())
 
             if diversity_layer_name is not None:
                 tensor = self.hook_dict[diversity_layer_name].features
@@ -183,7 +195,7 @@ class ClassSpecificImageGenerator():
                                 diversity_loss += cur
 
                     class_loss *= 0
-                class_loss += 10 * diversity_loss
+                class_loss += 1e-6**0 * diversity_loss # * 10
 
             n_step_start_force_rep = 180
             if (len(force_rep_indices) > 0) and (n_step >= n_step_start_force_rep):
@@ -270,7 +282,7 @@ class ClassSpecificImageGenerator():
         if not if_cppn:
             self.if_fourier = True
             if self.if_fourier:
-                h, w = self.size_0 * 1, self.size_1 * 1
+                h, w = self.size_0 * size_multiplier, self.size_1 * size_multiplier
                 freqs = rfft2d_freqs(h, w)
                 channels = 3
                 init_val_size = (batch_size, channels) + freqs.shape + (2,)  # 2 for imaginary and real components
@@ -279,7 +291,7 @@ class ClassSpecificImageGenerator():
 
                 if_start_from_existing = False
                 if if_start_from_existing:
-                    if_start_from_dataset = False
+                    if_start_from_dataset = True
                     if if_start_from_dataset:
                         with open('configs.json') as config_params:
                             configs = json.load(config_params)
@@ -287,9 +299,8 @@ class ClassSpecificImageGenerator():
                                           img_size=(h, w), augmentations=None)
                         # img = test_dst.__getitem__(0)[0]
                         # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/171070.png') #broad-faced guy
-                        img = test_dst.get_item_by_path(
-                            '/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/180648.png')  # blond smiling gal
-                        # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/170028.png') #black-haired dude & pink-shirt woman
+                        # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/180648.png')  # blond smiling gal
+                        img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/170028.png') #black-haired dude & pink-shirt woman
                         # img = test_dst.get_item_by_path('/mnt/raid/data/chebykin/celeba/Img/img_align_celeba_png/174565.png') #brown-haired woman on orange background
                         # img = img[-175:, 15:125, :]
                     else:
@@ -529,7 +540,7 @@ class ClassSpecificImageGenerator():
             # TODO: DANGER! because output is not copied, if it's modified further in the forward pass, the values here will also be modified
             # (this happens with "+= shortcut")
             self.module = module
-            if True:#True or 'relu2' not in self.name:
+            if 'relu2' not in self.name:
                 self.features = output
             else:
                 self.features = input[0]
@@ -562,7 +573,16 @@ class ClassSpecificImageGenerator():
     def generate(self, n_steps, if_save_intermediate=True):
         coeff_due_to_small_input = 0.35 * 2
         # coeff_due_to_small_input /= coeff_due_to_small_input #comment this line when input is small
-        initial_learning_rate = 2 * 5 * 2 * 0.4 * 2 * 0.5 * 0.01 * coeff_due_to_small_input  # 0.03  # 0.05 is good for imagenet, but not for celeba
+        # 0.03  # 0.05 is good for imagenet, but not for celeba
+        celeba_lr = 2 * 2 * 0.5 * 0.01 * coeff_due_to_small_input
+        initial_learning_rate = celeba_lr
+        if self.if_cifar:
+            cifar_lr = 2 * 2 * 2 * 0.4 * 2 * 0.5 * 0.01 * coeff_due_to_small_input
+            initial_learning_rate = cifar_lr
+        if not self.use_my_model:
+            imagenet_lr = 2 * (5) ** 1 * 2 * 0.4 * 2 * 0.5 * 0.01 * coeff_due_to_small_input
+            initial_learning_rate = imagenet_lr
+
         # too high lr => checkerboard patterns & acid colors, too low lr => uniform grayness
         saved_iteration_probs = {}
         self.recreate_and_save(self.image, 'generated/init.jpg')
@@ -592,13 +612,13 @@ class ClassSpecificImageGenerator():
             # temp = self.processed_image.clone().cpu().detach().numpy()[0, :, :, :]
             # temp = temp.permute((1, 2, 0))
 
-            pixels_to_jitter1 = 8 #* 2
-            pixels_to_jitter2 = 4 #* 2
+            pixels_to_jitter1 = 8 #* 4
+            pixels_to_jitter2 = 4 #* 4
             pixels_to_pad = pixels_to_jitter1 + pixels_to_jitter2
             img_width = self.size_0
             img_height = self.size_1
-            ROTATE = 5 #* 5
-            SCALE = 1.1
+            ROTATE = 40 #15 is good for celeba #25 is good for cifar # 40 #* 5
+            scale_defining_const = 7
 
             # pad is 'reflect' because that's what's in colab
             self.image_transformed = apply_transformations(self.image, [
@@ -609,7 +629,7 @@ class ClassSpecificImageGenerator():
                 # lambda img: random_crop(img, img_width, img_height),
                 lambda img: jitter_lucid(img, pixels_to_jitter1),
                 # random_scale([1] * 10 + [1.005, 0.995]),
-                random_scale([1 + i / 25. for i in range(-5, 6)] + 5 * [1]),
+                random_scale([1 + i / 25. for i in range(-scale_defining_const, scale_defining_const+1)] + 5 * [1]),
                 # [SCALE ** (n/10.) for n in range(-10, 11)]),
                 # random_rotate([-45]),
                 random_rotate(list(range(-ROTATE, ROTATE + 1)) + 5 * [0]),  # range(-ROTATE, ROTATE+1)),#,
@@ -693,7 +713,7 @@ if __name__ == '__main__':
         # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_rescaled.json'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_50_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_' + str(epoch) + '_model.pkl'
         # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_' + str(epoch) + '_model.pkl'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_' + str(46) + '_model.pkl'
         # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled2.json'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_25_on_June_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_31_model.pkl'
         # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_rescaled3_bigimg.json'
@@ -701,22 +721,35 @@ if __name__ == '__main__':
         # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_nocomeback_rescaled2.json'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_00_on_August_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0003|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_16_model.pkl'
         # param_file = 'params/binmatr2_filterwise_sgdadam001+0003_pretrain_bias_condecayall2e-6_comeback_preciserescaled_rescaled2.json'
-        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-        # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_19_on_October_13/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-        param_file = 'params/binmatr2_imagenette_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+        # my favourite cifar:
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+        param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_19_on_October_13/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+        # param_file = 'params/binmatr2_imagenette_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+        # cifar eights-width layer4narrow
+        # save_model_path = r'/mnt/raid/data/chebykin/saved_models/15_15_on_November_09/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[8|_8|_8|_16|_16|_16|_16|_32|_32|_32|_32|_16|_16|_16|_16]|architecture=binmatr2_resnet18|width_mul=0.125|weight_decay=0.0003|connectiv_240_model.pkl'
+        # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask_eightswidth_layer4narrow.json'
 
         if False:
             save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_avgadditives' + '.pkl'
             removed_conns = defaultdict(list)
+            removed_conns['shortcut'] = defaultdict(list)
             if False:
                 print('Some connections were disabled')
                 # removed_conns[5] = [(5, 23), (5, 25), (5, 58)]
+                # removed_conns[7] = [(241, 23)]
                 # removed_conns[8] = [(137, 143)]
-                # removed_conns[9] = [(142, 188), (216, 188)]
-                removed_conns[10] = [(188, 104),
-                                     (86, 104)
-                                     ]
+                removed_conns[9] = [
+                                    (142, 188),
+                                    (216, 188),
+                                    (187, 86),
+                                    (224, 86)
+                                   ]
+                removed_conns[10] = [#(188, 104),
+                                     # (86, 104)
+                                    ]
+                removed_conns['shortcut'][8] = [(86, 86)]
+
             trained_model = load_trained_model(param_file, save_model_path, if_additives_user=True,
                                                if_store_avg_activations_for_disabling=True,
                                                conns_to_remove_dict=removed_conns)
@@ -764,14 +797,15 @@ if __name__ == '__main__':
         used_neurons = np.load(f'actually_good_nodes_{model_name_short}.npy', allow_pickle=True).item()
 
     batch_size = 1
-    n_steps = 1200
-    for j, layer_name in [(None, layers_bn_prerelu[13])]:  # [(None, 'label')]:  # list(enumerate(layers)) + [(None, 'label')]:  #
+    n_steps = 2400
+    tensor_loss_mul = -1 #multiplied only by the part of the loss dependent on the features, not the whole loss
+    for j, layer_name in [(None, layers_bn_prerelu[10])]:  # [(None, 'label')]:  # list(enumerate(layers)) + [(None, 'label')]:  #
         if layer_name != 'label':
             if False:
                 cur_neurons = used_neurons[j]
                 cur_neurons = [int(x[x.find('_') + 1:]) for x in cur_neurons]
             else:
-                cur_neurons = [101]
+                cur_neurons = [86]
             diversity_layer_name = layer_name
         else:
             cur_neurons = [6]  # range(40)  # [task_ind_from_task_name('blackhair')] #
@@ -780,8 +814,8 @@ if __name__ == '__main__':
             print('Current: ', layer_name, i)
             # layer_name = 'layer3_1_conv1'#'layer1_1'#'layer1_1_conv1'#'label'#'layer1_0' #
             csig = ClassSpecificImageGenerator(trained_model, (layer_name, i), im_size, batch_size, use_my_model,
-                                               hook_dict, layer_name if False else None, [], False, if_cifar=False,
-                                               if_imagenette=True)  # list(range(14)))
+                                               hook_dict, layer_name if (batch_size > 1) else None, [], False, if_cifar=False,
+                                               if_imagenette=True, tensor_loss_mul=tensor_loss_mul)  # list(range(14)))
             # ,diversity_layer_name)
             generated = csig.generate(n_steps, True)
 
