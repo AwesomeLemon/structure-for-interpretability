@@ -10,16 +10,10 @@ import numpy as np
 from multi_task.load_model import load_trained_model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-experiment = 'imagenet_weights'#'baseline'#'wearing_lipstick'#
-if experiment == 'wearing_lipstick':
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/19_43_on_September_21/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._120_model.pkl'
-    param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_lipstickonly_weightedce.json'
-    model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
-    if_pretrained_imagenet = False
-elif experiment == 'baseline':
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_15_model.pkl'
-    param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc.json'
-    model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
+experiment = 'imagenet_weights'#'baseline'#'only-lipstick'#
+if experiment in ['only-lipstick', 'baseline']:
+    save_model_path = f'pretrained_models/{experiment}.pkl'
+    param_file = f'named_params/{experiment}.json'
     if_pretrained_imagenet = False
 elif experiment == 'imagenet_weights':
     if_pretrained_imagenet = True
@@ -53,7 +47,7 @@ else:
     model = torchvision.models.__dict__['resnet18'](pretrained=True).to(device)
 
 # w = model['all'].linear.weight.cpu().detach().numpy()
-if experiment == 'wearing_lipstick':
+if experiment == 'only-lipstick':
     wasser_dists = np.load('wasser_dists/wasser_dist_attr_hist_lipstickonly_v2_14.npy', allow_pickle=True).item()
     wasser_dists = np.array(pd.DataFrame(wasser_dists))
     for i in range(40):
@@ -73,5 +67,3 @@ elif experiment == 'imagenet_weights':
 elif experiment == 'baseline':
     wasser_dists = np.load('wasser_dists/wasser_dist_attr_hist_bettercifar10single_14.npy', allow_pickle=True).item()
     wasser_dists = np.array(pd.DataFrame(wasser_dists))
-
-print(1)

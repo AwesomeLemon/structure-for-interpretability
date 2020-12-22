@@ -563,41 +563,20 @@ def test_averagedadditives_net(param_file, save_model_path, if_actively_disable_
 
 if __name__ == '__main__':
     model_to_evaluate = 'learned-structure-l1-disable-mouth'#'learned-structure-l1-disable-black-hair'#'learned-structure-l1'#'baseline-pruned'#'learned-structure-no-l1'#'baseline'
-    # THE TWO MODELS BELOW ARE MY REFERNCES AS "BIG" & "BIGGER" MODELS
+    # THE TWO MODELS BELOW ARE MY REFERENCES AS "BIG" & "BIGGER" MODELS
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_25_on_April_30/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|connectivities_l1_all=False|if__23_model.pkl'
     # param_file = 'params/binmatr2_16_16_4_sgdadam0004_pretrain_fc_bigimg.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_06_on_April_26/optimizer=SGD_Adam|batch_size=52|lr=0.002|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|_27_model.pkl'
     # param_file = 'params/binmatr2_16_16_4_sgdadam0002_pretrain_condecaytask1e-4_biggerimg.json'
 
-    if model_to_evaluate == 'baseline':
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_15_model.pkl'
-        param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc.json'
-    elif model_to_evaluate == 'learned-structure-no-l1':
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_12_on_June_08/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_23_model.pkl'
-        param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_nocondecay_comeback.json'
-    elif model_to_evaluate in ['learned-structure-l1', 'learned-structure-l1-disable-black-hair', 'learned-structure-l1-disable-mouth']:
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
-        param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled2.json'
-    elif model_to_evaluate == 'baseline-pruned':
-        save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_40_on_November_29/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
-        param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc_prune_finetune.json'
-
-    # hat only:
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_56_on_September_09/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._67_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_wearinghatonly_weightedce.json'
-    # bangs only:
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_23_on_September_10/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._120_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_bangsonly_weightedce.json'
-    # lipstick only
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/19_43_on_September_21/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._120_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_lipstickonly_weightedce.json'
-    #   single-head cifar
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_28_on_September_21/optimizer=SGD_Adam|batch_size=128|lr=0.1|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_deca_145_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgdadam1+001bias_batch128_weightdecay1e-4_condecayall2e-6_inc_singletask.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_58_on_October_02/optimizer=SGD|batch_size=128|lr=0.001|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0_240_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+    if model_to_evaluate in ['baseline', 'learned-structure-no-l1', 'learned-structure-l1', 'baseline-pruned', 'only-hat', 'only-lipstick', 'cifar-net']:
+        save_model_path = f'pretrained_models/{model_to_evaluate}.pkl'
+        param_file = f'named_params/{model_to_evaluate}.json'
+    elif model_to_evaluate in ['learned-structure-l1-disable-black-hair', 'learned-structure-l1-disable-mouth']:
+        save_model_path = f'pretrained_models/learned-structure-l1-avg-additives.pkl'
+        param_file = f'named_params/learned-structure-l1.json'
+    else:
+        raise NotImplementedError(f'Unknown model name: {model_to_evaluate}')
 
     # trained_model = torchvision.models.__dict__['resnet18'](pretrained=True).cuda()
     # eval_trained_model(param_file, trained_model, if_pretrained_imagenet=True)
@@ -605,7 +584,6 @@ if __name__ == '__main__':
     if_actively_disable_bias=False
     try:
         if model_to_evaluate in ['learned-structure-l1-disable-black-hair', 'learned-structure-l1-disable-mouth']:
-            save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_avgadditives' + '.pkl'
             removed_conns = defaultdict(list)
             removed_conns['shortcut'] = defaultdict(list)
             if model_to_evaluate == 'learned-structure-l1-disable-mouth':

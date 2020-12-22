@@ -8,3 +8,5 @@ and try to adapt the code appropriately.
 'params' folder includes all parameter configurations that I tried.
 
 'named_params' folder includes parameter configurations for models used in the thesis.
+
+Pre-trained models are in the v0.0.1 release. Put them into the 'pretrained_models' folder.
