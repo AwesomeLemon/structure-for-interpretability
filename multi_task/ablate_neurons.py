@@ -10,6 +10,8 @@ import numpy as np
 from matplotlib import pyplot as plt
 from util.util import *
 from scipy.integrate import simps
+import scipy.stats
+from dicts import imagenet_dict
 
 from sklearn.metrics import confusion_matrix
 import pandas as pd
@@ -193,14 +195,16 @@ def plot_prec_recall_change(save_model_path, param_file,
 
     n_neurons = 512
     n_classes = 1000
-    n_neurons_to_disable = [1, 4, 8, 16, 32, 64, 128]#[8, 16]#
+    n_neurons_to_disable = [32]#[1, 4, 8, 16, 64, 128]#[8, 16]#
     neuron_sorting_funs = [lambda wasser_dists_values, idx: np.random.permutation(n_neurons),
                             lambda wasser_dists_values, idx: np.array(sort_neurons_for_class(wasser_dists_values, idx)[0][::-1]),
                             lambda wasser_dists_values, idx: sort_neurons_for_class(wasser_dists_values, idx)[0],
                            ]
-    neuron_sorting_fun_names = ['rand', 'sort by max', 'sort by min']
+    neuron_sorting_fun_names = ['random', 'sort-max', 'sort-min']
     precision_means = np.zeros((len(neuron_sorting_funs), len(n_neurons_to_disable)))
     recall_means = np.zeros((len(neuron_sorting_funs), len(n_neurons_to_disable)))
+    precision_stds = np.zeros((len(neuron_sorting_funs), len(n_neurons_to_disable)))
+    recall_stds = np.zeros((len(neuron_sorting_funs), len(n_neurons_to_disable)))
     for i, sorting_fun in enumerate(neuron_sorting_funs):
         for j, n_to_disable in enumerate(n_neurons_to_disable):
             print(n_to_disable)
@@ -221,13 +225,15 @@ def plot_prec_recall_change(save_model_path, param_file,
 
             precision_means[i, j] = np.mean(p_diffs)
             recall_means[i, j] = np.mean(r_diffs)
+            precision_stds[i, j] = np.std(p_diffs)
+            recall_stds[i, j] = np.std(r_diffs)
 
     plt.title('Precision change')
     plt.xlabel('Units ablated')
     plt.xticks(n_neurons_to_disable)
     for i in range(len(neuron_sorting_funs)):
-        plt.plot(n_neurons_to_disable, precision_means[i],
-                     label=neuron_sorting_fun_names[i])
+        plt.errorbar(n_neurons_to_disable, precision_means[i], yerr=precision_stds[i],
+                     label=neuron_sorting_fun_names[i], capsize=5)
     plt.legend()
     plt.show()
 
@@ -235,10 +241,14 @@ def plot_prec_recall_change(save_model_path, param_file,
     plt.xlabel('Units ablated')
     plt.xticks(n_neurons_to_disable)
     for i in range(len(neuron_sorting_funs)):
-        plt.plot(n_neurons_to_disable, recall_means[i],
-                     label=neuron_sorting_fun_names[i])
+        plt.errorbar(n_neurons_to_disable, recall_means[i], yerr=recall_stds[i],
+                     label=neuron_sorting_fun_names[i], capsize=5)
     plt.legend()
     plt.show()
+    np.save('prec_means2.npy', precision_means)
+    np.save('recall_means2.npy', recall_means)
+    np.save('prec_stds2.npy', precision_stds)
+    np.save('recall_stds2.npy', recall_stds)
 
 
 def ablate_neurons_based_on_saved_activations(save_model_path, param_file,
@@ -288,6 +298,12 @@ def ablate_neurons_based_on_saved_activations(save_model_path, param_file,
     maxs = np.array([np.max(list(wd_neuron.values())) for wd_neuron in wasser_dists_values])
     idx = np.argsort(maxs)
     mins = np.array([np.abs(np.min(list(wd_neuron.values()))) for wd_neuron in wasser_dists_values])
+    max_recall_drop = (recalls_after_disabling - recall_before).min(axis=-1)
+    max_prec_drop = (precisions_after_disabling - precision_before).min(axis=-1)
+    print(scipy.stats.pearsonr(maxs, max_recall_drop))
+    print(scipy.stats.pearsonr(maxs, max_prec_drop))
+    print(scipy.stats.pearsonr(mins, max_recall_drop))
+    print(scipy.stats.pearsonr(mins, max_prec_drop))
     # l1_norms_dict = np.load(f'l1_norms_{model_name_short}.npy', allow_pickle=True).item()
     # l1s = l1_norms_dict['layer4.1.conv2.weight']
     # l1s = l1s.values()
@@ -297,7 +313,7 @@ def ablate_neurons_based_on_saved_activations(save_model_path, param_file,
     # np.save('prec_rec_10.npy',
     #         (precision_before, recall_before, precisions_after_disabling, recalls_after_disabling, acc_diffs),
     #         allow_pickle=True)
-
+    exit()
     accs_cumulative_ablation = np.zeros(n_neurons)
     with torch.no_grad():
         for i in range(0, n_neurons):
@@ -365,12 +381,12 @@ if __name__ == '__main__':
                                         14:'layer4.1.conv2.ordinary_conv.weight'}
     # calc_l1_norms_of_weights(save_model_path)
     # exit()
-    ablate_neurons_based_on_saved_activations(save_model_path, param_file,
-                    wd_path='wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_' + str(14) + '.npy')
-    exit()
-    # plot_prec_recall_change(save_model_path, param_file,
-    #                 wd_path='wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_' + str(14) + '.npy')
+    # ablate_neurons_based_on_saved_activations(save_model_path, param_file,
+    #                 wd_path='wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test_' + str(14) + '.npy')
     # exit()
+    plot_prec_recall_change(save_model_path, param_file,
+                    wd_path='wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test_' + str(14) + '.npy')
+    exit()
     # plot_ablation_strategy_comparisons(model_name_short, ['sum', 'max', 'max+min', 'min'], range(15))
     # exit()
     # areas = create_areas_array(model_name_short, ['sum', 'max', 'max+min', 'min'], range(15))

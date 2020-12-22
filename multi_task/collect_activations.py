@@ -345,10 +345,15 @@ class ActivityCollector():
                                 diff = out_t[:, 1] - out_t[:, 0]
                             for j in range(out_t.shape[0]):
                                 if key != 'all': # multi-task network
-                                    if not if_sort_by_path:
-                                        sorted_dict_per_layer_per_neuron['label'][int(key)][diff[j]] = im_paths[j]
+                                    if not if_save_argmax_labels:
+                                        cur_value = diff[j].item()
                                     else:
-                                        sorted_dict_per_layer_per_neuron['label'][int(key)][im_paths[j]] = diff[j].item()
+                                        cur_value = int(out_t[j] == 1)
+                                    if not if_sort_by_path:
+                                        sorted_dict_per_layer_per_neuron['label'][int(key)][cur_value] = im_paths[j]
+                                    else:
+                                        sorted_dict_per_layer_per_neuron['label'][int(key)][im_paths[j]] = cur_value
+
                                 else: # single task network, e.g. a 10-class softmax
                                     for k in range(n_classes):
                                         if not if_save_argmax_labels:
@@ -667,7 +672,7 @@ class ActivityCollector():
             for cond_i, idx in enumerate(cond_neurons):
                 if if_plot:
                     title = str(idx)
-                    if cond_layer_idx == 15:
+                    if cond_layer_idx == -1:
                         if dataset_type=='celeba':
                             title = celeba_dict[idx]
                         elif dataset_type=='cifar':
@@ -942,6 +947,8 @@ class ActivityCollector():
                         # chunks = [8, 8, 8, 16, 16, 16, 16, 32, 32, 32, 32, 16, 16, 16, 16]
                         # chunks = [8, 8, 8, 16, 16, 16, 16, 32, 32, 32, 32, 8, 8, 8, 8]
                         # chunks = [8, 8, 8, 16, 16, 16, 16, 32, 32, 32, 32, 2, 2, 2, 2]
+                    elif used_neurons == 'resnet_early':
+                        chunks = [64, 64]
                     used_neurons = {}
                     for idx, ch in enumerate(chunks):
                         used_neurons[idx] = np.array(range(chunks[idx]))
@@ -963,8 +970,8 @@ class ActivityCollector():
             # cond_neurons = [0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
             # cond_neurons = list(range(1000))#[0, 217, 482, 491, 497, 566, 569, 571, 574, 701] + list(range(1, 10)) + list(range(901, 911))
             # cond_neurons = list(range(301))
-            cond_neurons = list(range(1197))
-            # cond_neurons = list(range(10))
+            # cond_neurons = list(range(1197))
+            cond_neurons = list(range(10))
 
         if not os.path.exists(df_val_images_activations_path) or if_force_recalculate:
             if not os.path.exists(sorted_dict_path) or if_force_recalculate:
@@ -988,7 +995,7 @@ class ActivityCollector():
 
 
         for layer_idx, targets in target_dict.items():
-            ac.compute_attr_hist_for_neuron_pandas(layer_idx, targets, 15, cond_neurons, if_cond_label, df,
+            ac.compute_attr_hist_for_neuron_pandas(layer_idx, targets, -1, cond_neurons, if_cond_label, df,
                                                    out_dir_path, used_neurons, dataset_type, if_calc_wasserstein,
                                                    offset, if_show, if_left_lim_zero, layer_list, if_plot
                                                    #,cond_neuron_lambda=lambda x: hypernym_idx_to_imagenet_idx[x]
@@ -1132,7 +1139,7 @@ class ActivityCollector():
             dataset = CELEBA(root=configs['celeba']['path'], is_transform=True, split='custom',
                              img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']),
                              augmentations=None, custom_img_paths=img_paths)
-        batch_size = 1450  # 250
+        batch_size = 250#1450  #
         dataloader = data.DataLoader(dataset, batch_size=batch_size, num_workers=2, shuffle=False, drop_last=False)
         probs = np.ones((len(img_paths), 40)) * -17
         all_tasks = [str(task) for task in range(40)]
@@ -1149,10 +1156,10 @@ class ActivityCollector():
                     probs[batch_size * batch_idx:batch_size * (batch_idx + 1), task_idx] = exped[:, 1]
                     # for img_idx in range(img.shape[0]):
                     #     probs[batch_size * batch_idx + img_idx, task_idx] = exped[img_idx][1].item()
-                ttt = 1
+
                 # print(out[8].detach().cpu().mean(axis=0)[[172, 400, 383]])
                 # print(out[9].detach().cpu().mean(axis=0)[[356, 204, 126, 187, 123, 134, 400, 383]])
-                print(out[11].detach().cpu().mean(axis=0)[[164, 400, 383]])
+                # print(out[11].detach().cpu().mean(axis=0)[[164, 400, 383]])
         return probs
 
     def get_feature_distribution_per_class(self, target: int, n_images: int, folder_suffix):
@@ -1393,15 +1400,13 @@ class ActivityCollector():
         return grads#.detach().cpu().numpy()
 
 
-    def calc_gradients_wrt_output_whole_network_all_tasks(self, loader, out_path, if_pretrained_imagenet=False):
+    def calc_gradients_wrt_output_whole_network_all_tasks(self, loader, out_path, if_pretrained_imagenet=False,
+                                                          layers = layers_bn_afterrelu):
         print("Warning! Assume that loader returns in i-th batch only instances of i-th class")
         # for model in self.model.values():
         #     model.zero_grad()
         #     model.eval()
 
-        layers = layers_bn_afterrelu
-        if if_pretrained_imagenet:
-            layers = layers_bn
         target_layer_names = [layer.replace('_', '.') for layer in layers]#layers_bn_afterrelu] #+ ['feature_extractor']
         neuron_nums = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
         # neuron_nums = [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
@@ -1440,10 +1445,14 @@ class ActivityCollector():
             batch = next(iter_loader)
             cur_grads = defaultdict(lambda : defaultdict(list)) # layer -> neuron -> grads from every batch (i.e. 1 scalar per batch)
             ims, labels = batch
-            mask = (labels == cond_idx)#(labels != cond_idx)#np.array([True] * len(labels))#
-            print(labels)
-            ims_masked = ims[mask,...]
-            ims_masked = ims_masked.cuda()
+            if False:
+                mask = (labels == cond_idx)#(labels != cond_idx)#np.array([True] * len(labels))#
+                print(labels)
+                ims_masked = ims[mask,...]
+                ims_masked = ims_masked.cuda()
+            else:
+                ims_masked = ims.cuda()
+                print(labels)
             out = self.feature_extractor(ims_masked)
             if not if_pretrained_imagenet:
                 #single-headed
@@ -1494,10 +1503,8 @@ class ActivityCollector():
         return df
 
     def correlate_grads_with_wass_dists_per_neuron(self, df_grads_path, out_path, wass_dists_path_prefix,
-                                                   if_replace_wass_dists_with_noise=False, target_indices=None):
-        layers = layers_bn_afterrelu
-        if if_pretrained_imagenet:
-            layers = layers_bn
+                                                   if_replace_wass_dists_with_noise=False, target_indices=None,
+                                                   layers=layers_bn_afterrelu):
         target_layer_names = [layer.replace('_', '.') for layer in layers]
         neuron_nums = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
         df_grads = pd.read_pickle(df_grads_path)
@@ -1505,6 +1512,7 @@ class ActivityCollector():
         if if_replace_wass_dists_with_noise:
             wasser_dists_np = np.random.laplace(0, 0.05, (10, 512))
         for i, layer_name in enumerate(target_layer_names):
+            print(layer_name)
             if target_indices is not None:
                 if i not in target_indices:
                     continue
@@ -1523,6 +1531,11 @@ class ActivityCollector():
             #             return np.take_along_axis(a, idx, axis=axis)
             #         wasser_dists_np = shuffle_along_axis(wasser_dists_np, axis=1)
             for neuron in range(neuron_nums[i]):
+                print(neuron)
+                if neuron >= wasser_dists_np.shape[1]:
+                    print('Something strange is afoot', neuron, wasser_dists_np.shape[1])
+                    data_corrs.append([layer_name, neuron, 0])
+                    break
                 # if (np.abs(wasser_dists_np[:, neuron]) >= 0.09).sum() < 3:
                 #     continue
                 cur_grads = np.array(df_grads.loc[(df_grads['layer_name'] == layer_name)
@@ -1549,44 +1562,73 @@ class ActivityCollector():
         df_corr = pd.DataFrame(data_corrs, columns=['layer_name', 'task_idx', 'corr'])
         df_corr.to_pickle(out_path)
 
-    def plot_correlation_of_grads_with_wass_dists(self, df_corr_path, task_idx=7):
+    def plot_correlation_of_grads_with_wass_dists(self, df_corr_path, layers,
+                                                  df_corr_paths_early=None, early_layers=None):
         df_corr = pd.read_pickle(df_corr_path)
-        target_layer_names = [layer.replace('_', '.') for layer in layers_bn_afterrelu]
-        for task_idx in range(10):
-            avg_corrs = []
+        target_layer_names = [layer.replace('_', '.') for layer in layers]
+        avg_corrs = []
+        for layer_name in target_layer_names:
+            cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)].drop(
+                ['layer_name', 'neuron_idx'], axis=1))
+            print(cur_corrs.shape)
+            avg_corrs.append(np.nanmean(cur_corrs))
+        if df_corr_paths_early is not None:
+            df_corr = pd.read_pickle(df_corr_paths_early)
+            target_layer_names = [layer.replace('_', '.') for layer in early_layers]
+            avg_corrs_early = []
             for layer_name in target_layer_names:
-                if True:
-                    cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)].drop(
-                        ['layer_name', 'neuron_idx'], axis=1))
-                else:
-                    cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)
-                                                     & (df_corr['task_idx'] == task_idx)].drop(
-                        ['layer_name', 'task_idx'], axis=1))
+                cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)].drop(
+                    ['layer_name', 'neuron_idx'], axis=1))
                 print(cur_corrs.shape)
-                avg_corrs.append(np.mean(cur_corrs))
-            plt.plot(avg_corrs)
-            break
+                avg_corrs_early.append(np.nanmean(cur_corrs))
+            avg_corrs = avg_corrs_early + avg_corrs
+
+        x = np.arange(len(avg_corrs))
+        plt.figure(figsize=(8*1.2, 6*1.2))
+        plt.plot(x, avg_corrs)
+        plt.xticks(x)
+        print(avg_corrs)
         plt.ylim(0, 1)
+        plt.xlabel('Layer index')
+        plt.ylabel('Avg. correlation')
         plt.show()
 
-    def plot_correlation_of_grads_with_wass_dists_many_runs(self, df_corr_paths):
+    def plot_correlation_of_grads_with_wass_dists_many_runs(self, df_corr_paths, layers,
+                                                            df_corr_paths_early=None, early_layers=None):
         df_corrs = [pd.read_pickle(df_corr_path) for df_corr_path in df_corr_paths]
-        target_layer_names = [layer.replace('_', '.') for layer in layers_bn_afterrelu]
+        target_layer_names = [layer.replace('_', '.') for layer in layers]
         avg_corrs_per_run = np.zeros((len(df_corrs), len(target_layer_names)))
         for i, df_corr in enumerate(df_corrs):
             for j, layer_name in enumerate(target_layer_names):
                 cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)].drop(
                     ['layer_name', 'neuron_idx'], axis=1))
                 avg_corrs_per_run[i, j] = np.mean(cur_corrs)
-        x = np.arange(15)
         means = np.mean(avg_corrs_per_run, axis=0)
-        plt.plot(x, means)
         stds = np.std(avg_corrs_per_run, axis=0)
+
+        if df_corr_paths_early is not None:
+            df_corrs = [pd.read_pickle(df_corr_path) for df_corr_path in df_corr_paths_early]
+            target_layer_names = [layer.replace('_', '.') for layer in early_layers]
+            avg_corrs_per_run = np.zeros((len(df_corrs), len(early_layers)))
+            for i, df_corr in enumerate(df_corrs):
+                for j, layer_name in enumerate(target_layer_names):
+                    cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)].drop(
+                        ['layer_name', 'neuron_idx'], axis=1))
+                    avg_corrs_per_run[i, j] = np.nanmean(cur_corrs)
+            means_early = np.mean(avg_corrs_per_run, axis=0)
+            stds_early = np.std(avg_corrs_per_run, axis=0)
+            means = np.append(means_early, means)
+            stds = np.append(stds_early, stds)
+
+        x = np.arange(len(means))
+        plt.figure(figsize=(8*1.2, 6*1.2))
+        plt.plot(x, means)
         plt.fill_between(x, means-stds, means+stds, facecolor='orange')
         plt.ylim(0, 1)
-        plt.title('Average correlation of W.dists & gradients\n averaged over 5 runs\n ± 1 std')
+        # plt.title('Average correlation of W.dists & gradients\n averaged over 5 runs\n ± 1 std')
         plt.xticks(x)
         plt.xlabel('Layer index')
+        plt.ylabel('Avg. correlation')
         plt.show()
 
 
@@ -1610,19 +1652,22 @@ class ActivityCollector():
                 configs = json.load(config_params)
             removed_conns = defaultdict(list)
             removed_conns['shortcut'] = defaultdict(list)
+            if_replace_by_zeroes = False  # True
             if False:
                 print('Some connections were disabled')
                 # removed_conns[5] = [(5, 23), (5, 25), (5, 58)]
                 # removed_conns[8] = [(137, 143)]
                 # removed_conns[9] = [(142, 188), (216, 188)]
-                # removed_conns[10] = [(188, 104),(86, 104)]
+                removed_conns[10] = [(188, 104),
+                                     # (86, 104)
+                                     ]
                 # removed_conns['label'] = [(481, 3),(481, 7)]
-                removed_conns[9] = [#(216, 181)
-                                    (142, 188),
-                                    (216, 188),
-                                    (187, 86),
-                                    (224, 86)
-                                    ]
+                # removed_conns[9] = [#(216, 181)
+                #                     (142, 188),
+                #                     (216, 188),
+                #                     (187, 86),
+                #                     (224, 86)
+                #                     ]
                 # removed_conns[10] = [(181, 279)]
                 # removed_conns[11] = [(28, 421)] + [(331, 392)]
                 # removed_conns[12] = [(406, 204)]
@@ -1646,7 +1691,8 @@ class ActivityCollector():
                     trained_model = load_trained_model(param_file, save_model_path, if_additives_user=True,
                                                        if_store_avg_activations_for_disabling=True,
                                                        conns_to_remove_dict=removed_conns,
-                                                       replace_with_avgs_last_layer_mode='restore')
+                                                       replace_with_avgs_last_layer_mode='restore',
+                                                       if_replace_by_zeroes=if_replace_by_zeroes)
                 except:
                     print('assume problem where cifar networks ignored the enable_bias parameter')
                     BasicBlockAvgAdditivesUser.id = 0 #need to reset
@@ -1654,7 +1700,8 @@ class ActivityCollector():
                                                        if_store_avg_activations_for_disabling=True,
                                                        conns_to_remove_dict=removed_conns,
                                                        replace_with_avgs_last_layer_mode='restore',
-                                                       if_actively_disable_bias=True)
+                                                       if_actively_disable_bias=True,
+                                                       if_replace_by_zeroes=if_replace_by_zeroes)
             else:
                 try:
                     trained_model = load_trained_model(param_file, save_model_path)
@@ -1866,15 +1913,15 @@ if __name__ == '__main__':
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_25_on_April_30/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|connectivities_l1_all=False|if__23_model.pkl'
     # param_file = 'params/binmatr2_16_16_4_sgdadam0004_pretrain_fc_bigimg.json'
     # fully-connected:
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_15_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc.json'
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_15_model.pkl'
+    param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_22_on_June_04/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0_20_model.pkl'
     # param_file = 'params/binmatr2_15_8s_sgdadam001+0005_pretrain_nocondecay_comeback.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_07_on_June_22/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_rescaled.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_50_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_6_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled.json'
-    # my precious:
+    # sparse celeba
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
     # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled2.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_39_on_September_06/optimizer=SGD_Adam|batch_size=256|lr=0.005|connectivities_lr=0.001|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
@@ -1883,8 +1930,8 @@ if __name__ == '__main__':
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_56_on_September_09/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._67_model.pkl'
     # param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_wearinghatonly_weightedce.json'
     # bangs only:
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_23_on_September_10/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._120_model.pkl'
-    param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_bangsonly_weightedce.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_23_on_September_10/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._120_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_bangsonly_weightedce.json'
     # multi-head cifar:
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_18_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4.json'
@@ -1957,8 +2004,8 @@ if __name__ == '__main__':
             params = json.load(json_params)
         with open('configs.json') as config_params:
             configs = json.load(config_params)
-        params['dataset'] = 'imagenet_val'
-        # params['dataset'] = 'imagenet_test'
+        # params['dataset'] = 'imagenet_val'
+        params['dataset'] = 'imagenet_test'
         params['batch_size'] = 256#320
     print(model_name_short)
     # ac.compare_AM_images(31, 12)
@@ -1988,10 +2035,10 @@ if __name__ == '__main__':
 
     # ac.store_highest_activating_images()
     plt.rcParams.update({'font.size': 16})
-    # params['batch_size'] = 1000/4#50/4#26707#11246#1251#10001#
+    # params['batch_size'] = 50/2#50/4#1000/4#26707#11246#1251#10001#
     # params['dataset'] = 'broden_val'
     _, val_loader, tst_loader = datasets.get_dataset(params, configs)
-    loader = val_loader
+    loader = val_loader#tst_loader#
 
     # store_path_and_label_df_broden(loader, 'path_to_label_df_broden_train.pkl')
     # store_path_and_label_df_broden(loader, 'path_to_label_df_broden_train_all.pkl') #includes color and material
@@ -2012,6 +2059,9 @@ if __name__ == '__main__':
     #                                    df_path='bettercifar10single_nonsparse_afterrelu.pkl', n_save=20)
     # ac.store_highest_activating_images('highest_activating_ims_imagenet_afterrelu_many',
     #                                    df_path='pretrained_imagenet_afterrelu.pkl', n_save=64, layer_list=layers_bn_afterrelu)
+    # ac.store_highest_activating_images('highest_activating_ims_imagenet_afterrelu_20_again',
+    #                                    df_path='pretrained_imagenet_afterrelu.pkl', n_save=20,
+    #                                    layer_list=layers_bn)#layers_bn_afterrelu)
     # ac.store_highest_activating_images('highest_activating_ims_cifar_layer4narrower1_afterrelu',
     #                                    df_path='cifar_layer4narrower1_lbl_afterrelu.pkl', n_save='all', layer_list=layers_bn_afterrelu)
     # ac.assess_binary_separability_1vsAll_whole_network('bettercifar10single_nonsparse_afterrelu.pkl', 'df_label_cifar.pkl',
@@ -2071,14 +2121,15 @@ if __name__ == '__main__':
     #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
     #                                                if_force_recalculate=True, if_dont_save=False, if_left_lim_zero=True,
     #                                                layer_list=layers_bn, if_plot=False)
-    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'pretrained_imagenet_afterrelu_test.pkl', 'all_network',
-    #                                                'attr_hist_pretrained_imagenet_afterrelu_test', if_cond_label=False,
-    #                                                used_neurons='resnet_full',
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'pretrained_imagenet_afterrelu_test_early_and_last.pkl',
+    #                                                {0:'all', 1:'all'},
+    #                                                'attr_hist_pretrained_imagenet_afterrelu_test_early_and_last', if_cond_label=False,
+    #                                                used_neurons='resnet_early',
     #                                                dataset_type='imagenet_test',
-    #                                 sorted_dict_path='img_paths_most_activating_sorted_dict_paths_pretrained_imagenet_afterrelu_test.npy',
+    #             sorted_dict_path='img_paths_most_activating_sorted_dict_paths_pretrained_imagenet_afterrelu_test_early_and_last.npy',
     #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
-    #                                                if_force_recalculate=False, if_dont_save=False, if_left_lim_zero=True,
-    #                                                layer_list=layers_bn_afterrelu, if_plot=False)
+    #                                                if_force_recalculate=True, if_dont_save=False, if_left_lim_zero=True,
+    #                                                layer_list=early_layers_and_last_bn_afterrelu, if_plot=False)
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'cifar10_6vsAll_afterrelu.pkl', 'all_network',
     #                                                'attr_hist_cifar10_6vsAll_afterrelu', if_cond_label=True,
     #                                                used_neurons='resnet_full',
@@ -2104,6 +2155,54 @@ if __name__ == '__main__':
     #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
     #                                                if_force_recalculate=False, if_dont_save=False, if_left_lim_zero=True,
     #                                                layer_list=layers_bn_afterrelu, if_plot=True)
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single_nonsparse_afterrelu_early_and_last.pkl', {0:'all', 1:'all'},
+    #                                                'attr_hist_bettercifar10single_early_and_last', if_cond_label=False,
+    #                                                used_neurons='resnet_early',
+    #                                                dataset_type='cifar',
+    #                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single_early_and_last.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
+    #                                                if_force_recalculate=True, if_left_lim_zero=True,
+    #                                                 layer_list=early_layers_and_last_bn_afterrelu)
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single2_nonsparse_afterrelu_early_and_last.pkl', {0:'all', 1:'all'},
+    #                                                'attr_hist_bettercifar10single2_early_and_last', if_cond_label=False,
+    #                                                used_neurons='resnet_early',
+    #                                                dataset_type='cifar',
+    #                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single2_early_and_last.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
+    #                                                if_force_recalculate=True, if_left_lim_zero=True,
+    #                                                 layer_list=early_layers_and_last_bn_afterrelu)
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single3_nonsparse_afterrelu_early_and_last.pkl', {0:'all', 1:'all'},
+    #                                                'attr_hist_bettercifar10single3_early_and_last', if_cond_label=False,
+    #                                                used_neurons='resnet_early',
+    #                                                dataset_type='cifar',
+    #                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single3_early_and_last.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
+    #                                                if_force_recalculate=True, if_left_lim_zero=True,
+    #                                                 layer_list=early_layers_and_last_bn_afterrelu)
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single4_nonsparse_afterrelu_early_and_last.pkl', {0:'all', 1:'all'},
+    #                                                'attr_hist_bettercifar10single4_early_and_last', if_cond_label=False,
+    #                                                used_neurons='resnet_early',
+    #                                                dataset_type='cifar',
+    #                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single4_early_and_last.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
+    #                                                if_force_recalculate=True, if_left_lim_zero=True,
+    #                                                 layer_list=early_layers_and_last_bn_afterrelu)
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single5_nonsparse_afterrelu_early_and_last.pkl', {0:'all', 1:'all'},
+    #                                                'attr_hist_bettercifar10single5_early_and_last', if_cond_label=False,
+    #                                                used_neurons='resnet_early',
+    #                                                dataset_type='cifar',
+    #                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single5_early_and_last.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
+    #                                                if_force_recalculate=True, if_left_lim_zero=True,
+    #                                                 layer_list=early_layers_and_last_bn_afterrelu)
+    ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'celeba_fc_v3.pkl', {13:'all'},
+                                                   'attr_hist_celeba_fc_v3', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   dataset_type='celeba',
+                                                    sorted_dict_path='img_paths_most_activating_sorted_dict_paths_celeba_fc_v3.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False,
+                                                   if_force_recalculate=True, if_left_lim_zero=True,
+                                                    layer_list=layers_bn_afterrelu)
     # chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
     # ac.wasserstein_barplot('attr_hist_pretrained_imagenet_prerelu', dict(zip(range(15), [range(c) for c in chunks])),
     #                        imagenet_dict, n_show=20, out_path_suffix='')
@@ -2133,17 +2232,35 @@ if __name__ == '__main__':
     # ac.store_highest_activating_patches(loader, [10], out_path='patches_imagenet',
     #                                     base_path='/mnt/raid/data/chebykin/imagenet_val/my_imgs',
     #                                     image_size=224)
-    # exit()
-    # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'grads_test_{model_name_short}.pkl', if_pretrained_imagenet)
+    exit()
+    # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'grads_test_early_{model_name_short}.pkl',
+    #                                                      if_pretrained_imagenet, early_layers_bn_afterrelu)
+    # # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_pretrained_imagenet_afterrelu_test.pkl', if_pretrained_imagenet)
+    # # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_pretrained_imagenet_afterrelu_test_early.pkl',
+    # #                                                      if_pretrained_imagenet, layers=early_layers_bn_afterrelu)
     # if True:
-    #     ac.correlate_grads_with_wass_dists_per_neuron(f'grads_test_{model_name_short}.pkl',
-    #                                                   f'corr_grads_test_{model_name_short}.pkl',
-    #                                        'wasser_dists/wasser_dist_attr_hist_bettercifar10single',
-    #                                                   if_replace_wass_dists_with_noise=False)
+    #     ac.correlate_grads_with_wass_dists_per_neuron(f'grads_test_early_{model_name_short}.pkl',
+    #                                                   f'corr_grads_test_early_{model_name_short}.pkl',
+    #                                        'wasser_dists/wasser_dist_attr_hist_bettercifar10single5_early_and_last',
+    #                                                   if_replace_wass_dists_with_noise=False, layers=early_layers_bn_afterrelu)
+    #     # ac.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test.pkl',
+    #     #                                               f'corr_grads_imagenet_test.pkl',
+    #     #                                               'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test',
+    #     #                                               if_replace_wass_dists_with_noise=False)
+    #     # ac.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test_early.pkl',
+    #     #                                               f'corr_grads_imagenet_test_early.pkl',
+    #     #                       'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test_early_and_last',
+    #     #                                       if_replace_wass_dists_with_noise=False, layers=early_layers_bn_afterrelu)
     # else:
     #     ac.correlate_grads_with_wass_dists_per_task(f'grads_{model_name_short}.pkl', f'corr_task_grads_{model_name_short}.pkl',
     #                                                   'wasser_dist_attr_hist_bettercifar10single')
+    # exit()
     # ac.plot_correlation_of_grads_with_wass_dists(f'corr_grads_test_{model_name_short}.pkl')
+    # ac.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test.pkl',
+    #                                              layers_bn_afterrelu,
+    #                                              'corr_grads_imagenet_test_early.pkl',
+    #                                              early_layers_bn_afterrelu)
+    # ac.plot_correlation_of_grads_with_wass_dists('corr_grads_imagenet_test_early.pkl', layers=early_layers_bn_afterrelu)
 
     # ac.plot_correlation_of_grads_with_wass_dists_many_runs([
     #     f'corr_grads_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in [
@@ -2154,7 +2271,20 @@ if __name__ == '__main__':
     #         r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
     #     ]
     # ])
-    # exit()
+    model_paths = [
+            r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+            r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+            r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+            r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+            r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+        ]
+    ac.plot_correlation_of_grads_with_wass_dists_many_runs(
+        [f'corr_grads_test_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in model_paths],
+        layers_bn_afterrelu,
+        [f'corr_grads_test_early_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in model_paths],
+        early_layers_bn_afterrelu
+    )
+    exit()
     #
     # grads_per_neuron = {}
     # layer = 12
@@ -2187,12 +2317,14 @@ if __name__ == '__main__':
     #                                                if_nonceleba=True,
     #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_sparsecifar.npy',
     #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False)
-    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'lipstickonly_nonsparse_afterrelu.pkl', {14:'all'},
-    #                                                'attr_hist_lipstickonly', if_cond_label=True,
-    #                                                used_neurons='resnet_quarter',
-    #                                                if_nonceleba=False,
-    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_lipstickonly.npy',
-    #                                                if_calc_wasserstein=True, offset=(0.0, 0.0), if_show=False)
+    ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'lipstickonly_nonsparse_afterrelu_v2.pkl', {14:'all'},
+                                                   'attr_hist_lipstickonly_v2', if_cond_label=True,
+                                                   used_neurons='resnet_quarter',
+                                                   dataset_type='celeba',
+                                                   sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_lipstickonly_v2.npy',
+                                                   if_calc_wasserstein=True, offset='argmax', if_show=False, if_force_recalculate=True,
+                                                   if_left_lim_zero=True, layer_list=layers_bn_afterrelu
+                                                   )
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'hatonly_nonsparse_afterrelu.pkl', {14:'all'},
     #                                                'attr_hist_hatonly', if_cond_label=True,
     #                                                used_neurons='resnet_quarter',
@@ -2281,6 +2413,14 @@ if __name__ == '__main__':
     #                                                if_nonceleba=False,
     #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu.npy',
     #                                                if_calc_wasserstein=True, offset=(-0.3, 0.3))
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'sparse_celeba_afterrelu.pkl', {14:[187]},
+    #                                                'attr_hist_sparse_celeba', if_cond_label=False,
+    #                                                used_neurons=f'actually_good_nodes_{model_name_short}.npy',
+    #                                                dataset_type='celeba',
+    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_sparse_celeba_afterrelu.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=True,
+    #                                                if_force_recalculate=True,
+    #                                                if_left_lim_zero=True, layer_list=layers_bn_afterrelu)
 
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'cifarfashion_sparse_afterrelu.pkl', 'all_network',
     #                                                'attr_hist_cifarshion', if_cond_label=False,
@@ -2321,15 +2461,15 @@ if __name__ == '__main__':
     #                                                if_nonceleba=False,
     #                                                sorted_dict_path=None)
     #
-    ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bangsonly_nonsparse_afterrelu2.pkl', {14:'all'},
-                                                   'attr_hist_bangsonly2', if_cond_label=True,
-                                                   used_neurons='resnet_quarter',
-                                                   dataset_type='celeba',
-                                                   sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bangsonly2.npy',
-                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False,
-                                                   if_force_recalculate=True,
-                                                   if_left_lim_zero=True, layer_list=layers_bn_afterrelu
-                                                   )
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bangsonly_nonsparse_afterrelu2.pkl', {14:'all'},
+    #                                                'attr_hist_bangsonly2', if_cond_label=True,
+    #                                                used_neurons='resnet_quarter',
+    #                                                dataset_type='celeba',
+    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bangsonly2.npy',
+    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False,
+    #                                                if_force_recalculate=True,
+    #                                                if_left_lim_zero=True, layer_list=layers_bn_afterrelu
+    #                                                )
 
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_32_on_September_14/optimizer=SGD|batch_size=256|lr=0.005|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0_66_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgd005bias_fc.json'
@@ -2430,7 +2570,7 @@ if __name__ == '__main__':
     # gan_path = f'/mnt/raid/data/chebykin/pycharm_project_AA/gans/model_18attr_cont/generator145.h5'
     # postfix = '_relgan5' + '_openmouthandsmile'
     gan_path = f'/mnt/raid/data/chebykin/pycharm_project_AA/gans/model_18attr2/generator568.h5' #543, 522
-    postfix = '_relgan6' #+ '_reversed' # + '_donothing'
+    postfix = '_relgan6' + '_reversed' # + '_donothing'
 
     if False:
         # attribute_changer = AttributeChanger('AttGAN', gan_path, 'gans/384_shortcut1_inject0_none_hq/setting.txt',
@@ -2440,25 +2580,28 @@ if __name__ == '__main__':
                                              out_path=experiment_name + postfix)
         # '/mnt/raid/data/chebykin/pycharm_project_AA/black_hair_closed_mouth_relgan1_reversed2')
         attribute_changer.generate(img_paths, labels, kwargs={
-            'Mouth_Slightly_Open':-1})  # need to pass labels just to peacify CustomDataset; don't really need them
+            'Mouth_Slightly_Open':1})  # need to pass labels just to peacify CustomDataset; don't really need them
         # attribute_changer.generate(img_paths, labels, kwargs={'Black_Hair':-1, 'Blond_Hair':1, 'Eyeglasses':1}) # need to pass labels just to peacify CustomDataset; don't really need them
         exit() # can't properly free memory, and Torch crashes in the next lines => can just as well exit myself
 
     if True:
         n_pics_total = len(img_paths)
-        n_pics_to_use = min(n_pics_total, 1450)#n_pics_total  #
+        n_pics_to_use = n_pics_total  #min(n_pics_total, 1450)#
         # idx = np.random.choice(n_pics_total, size=n_pics_to_use, replace=False)
         probs_before = np.array(ac.get_output_probs_many_images(img_paths, True))
+        pb = probs_before.mean(axis=0)
+        print(pb[8])
         # probs_after = np.array(
         #     ac.get_output_probs_many_images([f'./{experiment_name}{postfix}/{i}.jpg' for i in range(n_pics_to_use)],
         #                                     True))
-        # probs_after = np.array(ac.get_output_probs_many_images(np.array(sorted(glob.glob(f'./{experiment_name}{postfix}/*'))), True))
-        probs_after = np.array(ac.get_output_probs_many_images(np.array([
-            f'/mnt/raid/data/chebykin/pycharm_project_AA/black_hair_closed_mouth_relgan6_reversed/{i}.jpg' for i in range(n_pics_to_use)]), True))
+        probs_after = np.array(ac.get_output_probs_many_images(np.array(sorted(glob.glob(f'./{experiment_name}{postfix}/*'))), True))
+        # probs_after = np.array(ac.get_output_probs_many_images(np.array([
+        #     f'/mnt/raid/data/chebykin/pycharm_project_AA/black_hair_closed_mouth_relgan6_reversed/{i}.jpg' for i in range(n_pics_to_use)]), True))
         # print(probs_before.std(axis=0))
         # print(probs_after.std(axis=0))
-        pb = probs_before.mean(axis=0)
         pa = probs_after.mean(axis=0)
+        print(pa[8])
+        exit()
         print((probs_after - probs_before).mean(axis=0)[11])
 
         width = 0.35

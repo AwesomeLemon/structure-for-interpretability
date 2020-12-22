@@ -193,7 +193,7 @@ def get_test_dataset(params, configs):
         print('ERROR: No dataset is specified')
 
     if 'celeba' == params['dataset']:
-        test_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='val',
+        test_dst = CELEBA(root=configs['celeba']['path'], is_transform=True, split='test',
                            img_size=(configs['celeba']['img_rows'], configs['celeba']['img_cols']),
                            augmentations=None)
 

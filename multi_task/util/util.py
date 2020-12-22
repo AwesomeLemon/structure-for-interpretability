@@ -81,6 +81,10 @@ layers_bn_afterrelu = ['layer1_0',
              'layer4_1_relu1', 'layer4_1',
              ]
 
+early_layers_bn_afterrelu = ['conv1', 'layer1_0_relu1']
+
+early_layers_and_last_bn_afterrelu = ['conv1', 'layer1_0_relu1', 'layer4_1']
+
 cifar10_names = ['airplane', 'automobile', 'bird', 'cat', 'deer',
                  'dog', 'frog', 'horse', 'ship', 'truck']
 fashionmnist_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
@@ -313,8 +317,10 @@ def punish_outside_center(tensor):
 def images_list_to_grid_image(ims, if_rgba=False, if_draw_line=False):
     n_ims = len(ims)
     width, height = ims[0].size
-    rows_num = math.floor(math.sqrt(n_ims))
-    cols_num = int(math.ceil(n_ims / rows_num))
+    # rows_num = math.floor(math.sqrt(n_ims))
+    # cols_num = int(math.ceil(n_ims / rows_num))
+    rows_num = 4
+    cols_num = 5
     # rows_num = 500
     # cols_num = 20
     new_im = Image.new('RGB' if not if_rgba else 'RGBA', (cols_num * width, rows_num * height))

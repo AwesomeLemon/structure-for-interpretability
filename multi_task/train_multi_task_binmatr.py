@@ -156,7 +156,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
         model['rep'].load_state_dict(pretrained_dict)
 
 
-    if_continue_training = True
+    if_continue_training = False
     if if_continue_training:
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_10_on_December_06/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3_4_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_04_on_December_10/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|___5_model.pkl'
@@ -212,7 +212,7 @@ def train_multi_task(param_file, if_debug, conn_counts_file, overwrite_lr=None, 
             # prune all convs except the first three (conv1, layer0.conv1, layer0.conv2)
             mr = model['rep']
             # convs = list([layer for layer in model['rep'].modules() if isinstance(layer, torch.nn.Conv2d)])[3:]
-            convs = [mr.conv1, mr.layer1[0].conv1, mr.layer1[0].conv2,
+            convs = [#mr.conv1, mr.layer1[0].conv1, mr.layer1[0].conv2,
                      mr.layer1[1].conv1.ordinary_conv, mr.layer1[1].conv2.ordinary_conv,
                      mr.layer2[0].conv1.ordinary_conv, mr.layer2[0].conv2.ordinary_conv, mr.layer2[0].shortcut[0].ordinary_conv,
                      mr.layer2[1].conv1.ordinary_conv, mr.layer2[1].conv2.ordinary_conv,

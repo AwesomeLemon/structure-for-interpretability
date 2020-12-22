@@ -30,7 +30,8 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
                        if_enable_bias=False, if_replace_useless_conns_with_additives=False,
                        if_additives_user=False, replace_constants_last_layer_mode=None,
                        if_store_avg_activations_for_disabling=False, conns_to_remove_dict=None,
-                       replace_with_avgs_last_layer_mode=None, if_actively_disable_bias=False):
+                       replace_with_avgs_last_layer_mode=None, if_actively_disable_bias=False,
+                       if_replace_by_zeroes=False):
     # if_actively_disable_bias is needed because some cifar networks ignored the enable_bias parameter
     assert not (if_replace_useless_conns_with_additives and if_replace_useless_conns_with_bias
                 and if_store_avg_activations_for_disabling)  # only 1 of those can be true
@@ -240,6 +241,18 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
 
     # model['rep'].connectivities[-1][:, 435] = 0.
 
+    if "layer1.1.conv1.ordinary_conv.weight_mask" in model_rep_state:
+        # this is the pruned model that wasn't stored properly
+        for k, v in list(model_rep_state.items()):
+            if 'weight_mask' in k:
+                mask = v
+                param_name = k[:k.find('weight_mask')]
+                weight_orig = model_rep_state[param_name + 'weight_orig']
+                pruned_weight = mask * weight_orig
+                model_rep_state[param_name + 'weight'] = pruned_weight
+                del model_rep_state[k]
+                del model_rep_state[param_name + 'weight_orig']
+
     model['rep'].load_state_dict(model_rep_state)
     for i in range(3):
         # apparently learnings scales & biases are saved automatically as part of the model state
@@ -256,6 +269,8 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
             if conns_to_remove_dict is None:
                 raise ValueError('conns_to_remove_dict not initialized')
             model['rep'].block[0].connections_to_remove = conns_to_remove_dict
+            if if_replace_by_zeroes:
+                model['rep'].block[0].replace_with_zeroes = True
 
     if replace_constants_last_layer_mode == 'restore':
         model['rep'].last_layer_additives = state['last_layer_additives']
@@ -263,7 +278,19 @@ def load_trained_model(param_file, save_model_path, if_restore_connectivities=Tr
         model['rep'].last_layer_additives = state['last_layer_additives']
     for t in tasks:
         key_name = 'model_{}'.format(t)
-        model[t].load_state_dict(state[key_name])
+        cur_state = state[key_name]
+        if "linear.weight_mask" in cur_state:
+            # this is the pruned model that wasn't stored properly
+            for k, v in list(cur_state.items()):
+                if 'weight_mask' in k:
+                    mask = v
+                    param_name = k[:k.find('weight_mask')]
+                    weight_orig = cur_state[param_name + 'weight_orig']
+                    pruned_weight = mask * weight_orig
+                    cur_state[param_name + 'weight'] = pruned_weight
+                    del cur_state[k]
+                    del cur_state[param_name + 'weight_orig']
+        model[t].load_state_dict(cur_state)
 
     # print(model['35'].linear.weight)
     # np.where(model['rep'].connectivities[-1][35, :].cpu().detach().numpy() > 0.5)[0]
@@ -535,89 +562,33 @@ def test_averagedadditives_net(param_file, save_model_path, if_actively_disable_
 
 
 if __name__ == '__main__':
-    # save_model_path = r"/mnt/raid/data/chebykin/saved_models/first_model_epoch_100.pkl"
-    # "optimizer=Adam|batch_size=170|lr=0.0005|dataset=celeba|normalization_type=loss+|algorithm=mgda|use_approximation=True|scales={'\''0'\'': 0.025, '\''1'\'': 0.025, '\''2'\'': 0.025, '\''3'\'': 0.025, '\''4'\'': 0.025, '\''5'\'': 0.025, '\''6_100_model.pkl"'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/model_25nov_epoch31.pkl'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_50_on_November_27/ep1.pkl'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_21_on_November_27/optimizer=Adam|batch_size=256|lr=0.0005|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3___0.025|__4___0._1_model.pkl'
-    # param_file = 'sample_all_test.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_47_on_February_12/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.005|chunks=[4|_4|_4]|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.02_10_model.pkl'
-    # param_file = 'params/bigger_reg_4_4_4.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_37_on_February_19/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True_6_model.pkl'
-    # param_file = 'old_params/sample_all.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/06_58_on_February_26/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0001|chunks=[1|_1|_16]|architecture=resnet18|width_mul=1|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximatio_5_model.pkl'
-    # param_file = 'params/small_reg_1_1_16.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_20_on_April_15/optimizer=Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0015|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=2e-06|if_fully_connected=False|dataset=_58_model.pkl'
-    # param_file = 'params/binmatr2_8_8_8_condecay2e6_conlr0015.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_36_on_April_15/optimizer=SGD_Adam|batch_size=64|lr=0.1|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=False|dataset=ce_70_model.pkl'
-    # param_file = 'params/binmatr2_8_8_8_sgdadam01.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/02_09_on_April_17/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=False|use_pret_26_model.pkl'
-    # param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain.json' # THIS gave 8.98
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_33_on_February_25/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.0|architecture=resnet18_vanilla|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True_5_model.pkl'
-    # param_file = 'params/vanilla.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_37_on_April_25/optimizer=SGD_Adam|batch_size=256|lr=0.005|connectivities_lr=0.001|chunks=[8|_8|_32]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=3e-05|connectivities_l1_all=False|if_14_model.pkl'
-    # param_file = 'params/binmatr2_cifar.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_05_on_April_25/optimizer=SGD_Adam|batch_size=96|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|if__16_model.pkl'
-    # param_file = 'params/binmatr2_8_8_8_sgdadam001_pretrain_condecaytask1e-4_bigimg.json'
-
+    model_to_evaluate = 'learned-structure-l1-disable-mouth'#'learned-structure-l1-disable-black-hair'#'learned-structure-l1'#'baseline-pruned'#'learned-structure-no-l1'#'baseline'
     # THE TWO MODELS BELOW ARE MY REFERNCES AS "BIG" & "BIGGER" MODELS
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_25_on_April_30/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|connectivities_l1_all=False|if__23_model.pkl'
     # param_file = 'params/binmatr2_16_16_4_sgdadam0004_pretrain_fc_bigimg.json'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_06_on_April_26/optimizer=SGD_Adam|batch_size=52|lr=0.002|connectivities_lr=0.0005|chunks=[16|_16|_4]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0001|connectivities_l1_all=False|_27_model.pkl'
     # param_file = 'params/binmatr2_16_16_4_sgdadam0002_pretrain_condecaytask1e-4_biggerimg.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_42_on_April_17/optimizer=SGD|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[8|_8|_8]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=0.0|if_fully_connected=True|use_pretrained_17_model.pkl'
-    # param_file = 'params/binmatr2_8_8_8_sgd001_pretrain_fc.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_37_on_May_15/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_128|_128|_256|_256|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|connectivities_l1=2e-06|co_100_model.pkl'
-    # param_file = 'params/binmatr2_64_64_128_128_256_256_512_512_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_15_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_53_on_May_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_49_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam0004_pretrain_condecayall2e-6_bigimg.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_35_on_May_20/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_condecayall2e-6.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_06_on_June_08/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32|_32]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0|conn_45_model.pkl'
-    # param_file = 'params/binmatr2_15_32s_sgdadam001+0005_pretrain_bias_nocondecay_comeback.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_55_on_June_13/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay_60_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_nobias_fc_bigimg.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_30_on_June_18/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_fc_bigimg_consontop_condecayall3e-5.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_57_on_June_19/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_76_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_bigimg.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_41_on_June_21/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_bigimg.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_07_on_June_22/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_rescaled.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/00_50_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled2.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_43_on_June_24/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_58_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_rescaled3_bigimg.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_25_on_June_26/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_31_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam0004+0005_pretrain_bias_condecayall3e-6_comeback_rescaled3_bigimg.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_22_on_June_26/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_nocomeback_rescaled2.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/19_15_on_June_28/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_180_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_nocomeback_rescaled2.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_June_29/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_22_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_nocomeback_rescaled2.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_23_on_July_01/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_10_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_comeback_rescaled2.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/15_01_on_August_10/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_11_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc_baldonly.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_04_on_August_10/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_13_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled_weightedce.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_09_on_August_12/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall2e-6_comeback_weightedce.json'
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_00_on_August_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0003|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_61_model.pkl'
-    # param_file = 'params/binmatr2_filterwise_sgdadam001+0003_pretrain_bias_condecayall2e-6_comeback_preciserescaled_rescaled2.json'
+
+    if model_to_evaluate == 'baseline':
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_15_model.pkl'
+        param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc.json'
+    elif model_to_evaluate == 'learned-structure-no-l1':
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_12_on_June_08/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_23_model.pkl'
+        param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_nocondecay_comeback.json'
+    elif model_to_evaluate in ['learned-structure-l1', 'learned-structure-l1-disable-black-hair', 'learned-structure-l1-disable-mouth']:
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_18_on_June_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_46_model.pkl'
+        param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall3e-6_comeback_rescaled2.json'
+    elif model_to_evaluate == 'baseline-pruned':
+        save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_40_on_November_29/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_120_model.pkl'
+        param_file = 'params/binmatr2_filterwise_sgdadam001_pretrain_fc_prune_finetune.json'
+
     # hat only:
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_56_on_September_09/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._67_model.pkl'
     # param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_wearinghatonly_weightedce.json'
     # bangs only:
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_23_on_September_10/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._120_model.pkl'
-    param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_bangsonly_weightedce.json'
-    #   lipstick only
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/22_23_on_September_10/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._120_model.pkl'
+    # param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_bangsonly_weightedce.json'
+    # lipstick only
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/19_43_on_September_21/optimizer=SGD_Adam|batch_size=256|lr=0.0005|connectivities_lr=0.0|chunks=[16|_16|_16|_32|_32|_32|_32|_64|_64|_64|_64|_128|_128|_128|_128]|architecture=binmatr2_resnet18|width_mul=0.25|weight_decay=0._120_model.pkl'
     # param_file = 'params/binmatr2_filterwise_adam0005_fc_quarterwidth_lipstickonly_weightedce.json'
     #   single-head cifar
@@ -628,58 +599,34 @@ if __name__ == '__main__':
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_58_on_October_02/optimizer=SGD|batch_size=128|lr=0.001|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0_240_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
 
-    # config_name = 'configs.json'
-    # config_name = 'configs_big_img.json'
-    # config_name = 'configs_bigger_img.json'
-    if True:
-        # trained_model = torchvision.models.__dict__['resnet18'](pretrained=True).cuda()
-        # eval_trained_model(param_file, trained_model, if_pretrained_imagenet=True)
-        # exit()
-        #figure out whether need to actively disable bias due to cifar networks that ignored the enable_bias parameter
-        if_actively_disable_bias=False
-        try:
-            trained_model = load_trained_model(param_file, save_model_path)
-        except:
-            print('assume problem where cifar networks ignored the enable_bias parameter')
-            if_actively_disable_bias = True
-            trained_model = load_trained_model(param_file, save_model_path, if_actively_disable_bias=if_actively_disable_bias)
-        eval_trained_model(param_file, trained_model)
-        # convert_useless_connections_to_biases(param_file, save_model_path, config_name)
-        # test_biased_net(param_file, save_model_path, config_name)
-        # convert_useless_connections_to_additives(param_file, save_model_path)
-        # test_additives_net(param_file, save_model_path)
-        # store_averaged_activations_for_disabling(param_file, save_model_path, if_actively_disable_bias)
-        # test_averagedadditives_net(param_file, save_model_path, if_actively_disable_bias)
-    else:
-        # save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_avgadditives' + '.pkl'
-        # removed_conns = defaultdict(list)
-        # if False:
-        #     print('Some connections were disabled')
-        #     removed_conns[10] = [(188, 104),
-        #                          (86, 104)]
-        # trained_model = load_trained_model(param_file, save_model_path, if_additives_user=True,
-        #                                    if_store_avg_activations_for_disabling=True,
-        #                                    conns_to_remove_dict=removed_conns)
-        if False:
-            trained_model = load_trained_model(param_file, save_model_path)
-            eval_trained_model(param_file, trained_model, False, save_model_path)
+    # trained_model = torchvision.models.__dict__['resnet18'](pretrained=True).cuda()
+    # eval_trained_model(param_file, trained_model, if_pretrained_imagenet=True)
+    #figure out whether need to actively disable bias due to cifar networks that ignored the enable_bias parameter
+    if_actively_disable_bias=False
+    try:
+        if model_to_evaluate in ['learned-structure-l1-disable-black-hair', 'learned-structure-l1-disable-mouth']:
+            save_model_path = save_model_path[:save_model_path.find('.pkl')] + '_avgadditives' + '.pkl'
+            removed_conns = defaultdict(list)
+            removed_conns['shortcut'] = defaultdict(list)
+            if model_to_evaluate == 'learned-structure-l1-disable-mouth':
+                removed_conns[10] = [(188, 104)]
+                removed_conns['shortcut'][8] = [(86, 86)]
+            elif model_to_evaluate == 'learned-structure-l1-disable-black-hair':
+                removed_conns['shortcut'][12] = [(400, 400)]
+            trained_model = load_trained_model(param_file, save_model_path, if_additives_user=True,
+                                               if_store_avg_activations_for_disabling=True,
+                                               conns_to_remove_dict=removed_conns)
         else:
             trained_model = load_trained_model(param_file, save_model_path)
-            with open(param_file) as json_params:
-                params = json.load(json_params)
-            if 'input_size' not in params:
-                params['input_size'] = 'default'
-            if params['input_size'] == 'default':
-                im_size = (64, 64)
-                config_path = 'configs.json'
-            elif params['input_size'] == 'bigimg':
-                im_size = (128, 128)
-                config_path = 'configs_big_img.json'
-            elif params['input_size'] == 'biggerimg':
-                im_size = (192, 168)
-                config_path = 'configs_bigger_img.json'
-            with open(config_path) as config_params:
-                configs = json.load(config_params)
-            _, loader, _ = datasets.get_dataset(params, configs)
-            eval_trained_model(param_file, trained_model, loader=loader)
+    except:
+        print('assume problem where cifar networks ignored the enable_bias parameter')
+        if_actively_disable_bias = True
+        trained_model = load_trained_model(param_file, save_model_path, if_actively_disable_bias=if_actively_disable_bias)
+    eval_trained_model(param_file, trained_model)
 
+    # convert_useless_connections_to_biases(param_file, save_model_path, config_name)
+    # test_biased_net(param_file, save_model_path, config_name)
+    # convert_useless_connections_to_additives(param_file, save_model_path)
+    # test_additives_net(param_file, save_model_path)
+    # store_averaged_activations_for_disabling(param_file, save_model_path, if_actively_disable_bias)
+    # test_averagedadditives_net(param_file, save_model_path, if_actively_disable_bias)

@@ -28,7 +28,7 @@ from siren import SirenNet
 import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-size_multiplier = 1#6
+size_multiplier = 1#6#4 #
 
 def rfft2d_freqs(h, w):
     """Computes 2D spectrum frequencies."""
@@ -155,19 +155,37 @@ class ClassSpecificImageGenerator():
             model.eval()
             self.feature_extractor = self.model
             # self.get_target_tensor = lambda _, trunk_features: trunk_features[0, self.neuron_idx]
-            self.get_target_tensor = lambda img, _: self.hook_dict[self.target_layer_name].features[:,
-                                                    self.neuron_idx].mean()
+            if True:
+                self.get_target_tensor = lambda img, _: self.hook_dict[self.target_layer_name].features[:,
+                                                        self.neuron_idx].mean()
+            else:
+                print('optimize only for center neuron instead of the whole feature map')
+                self.get_target_tensor = lambda img, _: self.hook_dict[self.target_layer_name].features[:,self.neuron_idx][:,
+                                                        self.hook_dict[self.target_layer_name].features.shape[-2] // 2,
+                                                    self.hook_dict[self.target_layer_name].features.shape[-1] // 2]
+                # self.get_target_tensor = lambda img, _: self.hook_dict[self.target_layer_name].features[:,
+                #                                         self.neuron_idx][:,3, 3]
             self.get_probs = lambda x, y: None
 
         def inner_calculate_loss_f(self, image_transformed, trunk_features, n_step):
             output = self.get_target_tensor(image_transformed, trunk_features)
             target_weight = 2
             tensor_loss = -output * target_weight * self.tensor_loss_mul
-            class_loss = tensor_loss \
-                         + 1e4 * 1e-10 * (10e5 * 60e-9 * 30000) ** 1 * 0.0005 ** 3 * torch.norm(self.image_transformed, 1) \
-                         + 1e-4 * 1e3 ** 0 * 4 ** 0 * (10e7 * 3e-8 * 45000 *1.5) ** 0 * 0.0001 * 0.001 ** 1.5 * total_variation_loss(self.image_transformed, 2) \
-                # - 10* punish_outside_center(self.image_transformed)
-
+            if not self.use_my_model:
+                imagenet_reg = 1e4 * 1e-10 * (10e5 * 60e-9 * 30000) ** 1 * 0.0005 ** 3 * torch.norm(self.image_transformed, 1) \
+                               + 1e-4 * 1e3 ** 0 * 4 ** 0 * (10e7 * 3e-8 * 45000 *1.5) ** 0 * 0.0001 * 0.001 ** 1.5 * total_variation_loss(self.image_transformed, 2)
+                reg = imagenet_reg
+            elif self.if_cifar:
+                cifar_reg = 1e-3 * torch.norm(self.image_transformed, 1) \
+                               + 1e-3 * total_variation_loss(self.image_transformed, 2)
+                reg = cifar_reg
+            elif self.if_imagenette:
+                reg = 0
+            else: # celeba
+                celeba_reg = 0.0005 ** 3 * torch.norm(self.image_transformed, 1) \
+                               + 0.0001 * 0.001 ** 1.5 * total_variation_loss(self.image_transformed, 2)
+                reg = celeba_reg
+            class_loss = tensor_loss + reg
             if n_step % 60 == 0:
                 probs = self.get_probs(image_transformed, trunk_features)
                 if probs is not None:
@@ -617,7 +635,7 @@ class ClassSpecificImageGenerator():
             pixels_to_pad = pixels_to_jitter1 + pixels_to_jitter2
             img_width = self.size_0
             img_height = self.size_1
-            ROTATE = 40 #15 is good for celeba #25 is good for cifar # 40 #* 5
+            ROTATE = 40 #15 is good for celeba #25 is good for cifar # 40 is good for imagenet
             scale_defining_const = 7
 
             # pad is 'reflect' because that's what's in colab
@@ -721,7 +739,7 @@ if __name__ == '__main__':
         # param_file = 'params/binmatr2_filterwise_sgdadam001+0005_pretrain_bias_condecayall1e-6_nocomeback_rescaled2.json'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_00_on_August_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0003|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_16_model.pkl'
         # param_file = 'params/binmatr2_filterwise_sgdadam001+0003_pretrain_bias_condecayall2e-6_comeback_preciserescaled_rescaled2.json'
-        # my favourite cifar:
+        # single-head cifar:
         save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
         param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_19_on_October_13/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
@@ -739,14 +757,14 @@ if __name__ == '__main__':
                 # removed_conns[5] = [(5, 23), (5, 25), (5, 58)]
                 # removed_conns[7] = [(241, 23)]
                 # removed_conns[8] = [(137, 143)]
-                removed_conns[9] = [
-                                    (142, 188),
-                                    (216, 188),
-                                    (187, 86),
-                                    (224, 86)
-                                   ]
-                removed_conns[10] = [#(188, 104),
-                                     # (86, 104)
+                # removed_conns[9] = [
+                #                     (142, 188),
+                #                     (216, 188),
+                #                     (187, 86),
+                #                     (224, 86)
+                #                    ]
+                removed_conns[10] = [(188, 104),
+                                     #(86, 104)
                                     ]
                 removed_conns['shortcut'][8] = [(86, 86)]
 
@@ -797,18 +815,18 @@ if __name__ == '__main__':
         used_neurons = np.load(f'actually_good_nodes_{model_name_short}.npy', allow_pickle=True).item()
 
     batch_size = 1
-    n_steps = 2400
+    n_steps = 600
     tensor_loss_mul = -1 #multiplied only by the part of the loss dependent on the features, not the whole loss
-    for j, layer_name in [(None, layers_bn_prerelu[10])]:  # [(None, 'label')]:  # list(enumerate(layers)) + [(None, 'label')]:  #
+    for j, layer_name in [(None, layers_bn_prerelu[6])]:  #[(None, 'label')]:  #  list(enumerate(layers)) + [(None, 'label')]:  #
         if layer_name != 'label':
             if False:
                 cur_neurons = used_neurons[j]
                 cur_neurons = [int(x[x.find('_') + 1:]) for x in cur_neurons]
             else:
-                cur_neurons = [86]
+                cur_neurons = [84]
             diversity_layer_name = layer_name
         else:
-            cur_neurons = [6]  # range(40)  # [task_ind_from_task_name('blackhair')] #
+            cur_neurons = [8]  # range(40)  # [task_ind_from_task_name('blackhair')] #
             diversity_layer_name = layers[-1]
         for i in cur_neurons:
             print('Current: ', layer_name, i)

@@ -17,6 +17,8 @@ from multi_task.util.util import layers
 # THE ONE BELOW!
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/17_35_on_May_20/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1' \
 #                   r'|weight_de_58_model_additives.pkl'
+# fully-connected baseline: to know total number of connections
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_51_on_May_21/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_15_model.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_35_on_May_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_90_model.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_18_on_May_24/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_49_on_May_25/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
@@ -24,6 +26,9 @@ from multi_task.util.util import layers
 #                   r'|weight_de_49_model_additives.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/18_44_on_May_27/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1' \
 #                   r'|weight_de_60_model.pkl'
+
+#learned-structure-no-l1
+# save_model_path = r'/mnt/raid/data/chebykin/saved_models/04_12_on_June_08/optimizer=SGD_Adam|batch_size=256|lr=0.01|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_23_model.pkl'
 
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/23_29_on_June_15/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_49_model.pkl'
 # save_model_path = r'/mnt/raid/data/chebykin/saved_models/20_50_on_June_17/optimizer=SGD_Adam|batch_size=96|lr=0.004|connectivities_lr=0.0005|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_de_60_model.pkl'
@@ -109,14 +114,17 @@ else:
         attr_names_dict = dict(zip(range(attr_num), cifar10_names))
 
 g = Digraph('G', filename='cluster.gv', node_attr={'shape': 'rectangle'#'square'
-                                                    ,'fontsize': '15', 'fontcolor' : 'black',
+                                                    ,'fontsize': '15', 'fontcolor' : 'white',
                                                    'width': '1.0', 'height': '1.0',#'height': '.8', width was .8 too
                                                    'imagescale' : 'false',
                                                    'fixedsize':'true'
                                                    },
             edge_attr={'arrowhead': 'vee', 'penwidth': '.5'})
 # g.graph_attr['size'] = '5.75,5.25'
-g.attr(None, {'nodesep': '0.05', 'ranksep': '1.0'})
+# g.attr(None, {'nodesep': '0.05', 'ranksep': '1.0'})
+g.attr(None, {'nodesep': '0.03', 'ranksep': '0.2'})
+if True: # change layout from top-to-bottom to left-to-right
+    g.attr(None, {'rankdir':'LR'})
 print(g.source)
 
 
@@ -209,6 +217,23 @@ else:
 
 print(potentially_good_nodes)
 
+neurons_to_keep_fun = lambda neuron: True
+if True:
+    # pale_skin + rosy_cheeks neuron
+    # keep_set = set(['16_365', 'fc_26', 'fc_29'])
+    # hair colours circuit
+    # keep_set = {'16_123', '16_400', '16_383', 'fc_8', 'fc_9', 'fc_11', 'fc_17'}
+    # black hair circuit
+    # keep_set = {'fc_8', '16_400', '14_400', '13_104', '12_188', '12_86', '12_160',
+    #             '11_224', '10_86', '10_160', '10_23', '10_53',
+    #             }
+    # black hair flipping circuit
+    # keep_set = {'8_29', '8_96', '10_160'}
+    # wearing hat circuit
+    keep_set = {'16_187', '15_204', '14_421', '13_279', '12_73', #'10_73'
+                }
+    neurons_to_keep_fun = lambda neuron: neuron in keep_set
+
 # Create FC nodes:
 if False:
     assigned_to_cluster_indices = []
@@ -235,7 +260,9 @@ else:
         c.attr(style='filled', color='lightgrey')
         c.node_attr.update(style='filled', color='white')
         for i in range(attr_num):
-            c.node(f'fc_{i}', label=str(attr_names_dict[i].replace("_", r"\n")), image=f'{im_folder_path}/label/{i}.jpg', scale='False', fontsize='10')
+            neuron_name = f'fc_{i}'
+            if neurons_to_keep_fun(neuron_name):
+                c.node(neuron_name, label=str(attr_names_dict[i].replace("_", r"\n")), image=f'{im_folder_path}/label/{i}.jpg', scale='False', fontsize='10')
 
         # num_chains = 1
         # l = 40
@@ -295,6 +322,9 @@ for i in range(attr_num):
 
 print(f'Actually used nodes num: {sum(map(lambda x: len(x), actually_good_nodes.values()))}')
 # list(map(lambda x: print(len(x), sorted(x)), actually_good_nodes.values()))
+print(f'Actually used connections num: {len(edges_to_add)}')
+
+if_reenumerate_layers = True
 
 for j in range(len(learning_scales_binary)):
     with g.subgraph(name=f'cluster_{j}') as c:
@@ -303,10 +333,26 @@ for j in range(len(learning_scales_binary)):
         for node in actually_good_nodes[j]:
             layer_idx = int(node[:node.find('_')])
             neuron_idx = node[node.find('_') + 1:]
-            c.node(node, image=f'{im_folder_path}/{layers[layer_idx]}/{neuron_idx}.jpg')
+            neuron_name = f'{layer_idx + (2 if if_reenumerate_layers else 0)}_{neuron_idx}'
+            if neurons_to_keep_fun(neuron_name):
+                c.node(neuron_name, image=f'{im_folder_path}/{layers[layer_idx]}/{neuron_idx}.jpg')
 
 for (src, dst) in edges_to_add:
-    g.edge(src, dst)
+    if not if_reenumerate_layers:
+        g.edge(src, dst)
+    else:
+        layer_idx_src = 2 + int(src[:src.find('_')])
+        neuron_idx_src = src[src.find('_') + 1:]
+        dst_layer = dst[:dst.find('_')]
+        if dst_layer != 'fc':
+            layer_idx_dst = 2 + int(dst_layer)
+        else:
+            layer_idx_dst = 'fc'
+        neuron_idx_dst = dst[dst.find('_') + 1:]
+        src_name = f'{layer_idx_src}_{neuron_idx_src}'
+        dst_name = f'{layer_idx_dst}_{neuron_idx_dst}'
+        if neurons_to_keep_fun(src_name) and neurons_to_keep_fun(dst_name):
+            g.edge(src_name, dst_name)
 
 g.save('graph_cluster_binmatr.dot')
 

@@ -185,12 +185,15 @@ class BasicBlockNoSkip(nn.Module):
                                       bias=if_enable_bias)
         self.bn2 = nn.BatchNorm2d(planes)
 
+        self.relu1 = torch.nn.ReLU()
+        self.relu2 = torch.nn.ReLU()
+
 
     def forward(self, x):
         out = self.conv1(x)
-        out = F.relu(self.bn1(out))
+        out = self.relu1(self.bn1(out))
         out = self.bn2(self.conv2(out))
-        out = F.relu(out)
+        out = self.relu2(out)
         return out
 
 
@@ -439,9 +442,7 @@ class BasicBlockMockAdditivesUser(BasicBlock):
 class BasicBlockAvgAdditivesCreator(BasicBlock):
     '''
     this class is for converting non-constant inputs to constant (average) additives
-    current limitations:
-        - shortcuts aren't handled properly
-        - connections to task heads aren't handled properly
+    note that connections to task heads are handled outside of this class
     '''
     expansion = 1
     id = 0
@@ -579,6 +580,7 @@ class BasicBlockAvgAdditivesUser(BasicBlock):
     id = 0
     additives_dict = {}
     connections_to_remove = defaultdict(list) # layer -> [(from1, to1), (from2, to2),..]
+    replace_with_zeroes = False
 
     def __init__(self, in_planes, planes, stride=1, connectivity=(None, None), if_enable_bias=False):
         super().__init__(in_planes, planes, stride, connectivity, if_enable_bias)
@@ -595,6 +597,7 @@ class BasicBlockAvgAdditivesUser(BasicBlock):
         if_identity_shortcut = not if_projection_shortcut
         pre_conv1 = x
         additives_dict_cur = self.__class__.additives_dict[self.id]
+        mul_by_zero = int(not self.__class__.replace_with_zeroes)
 
         if not(type(self.conv1) is MaskedConv2d): #the 0-th block
             post_conv1 = self.conv1(pre_conv1)
@@ -608,7 +611,7 @@ class BasicBlockAvgAdditivesUser(BasicBlock):
                     self.conv1.connectivity[0][to_idx, from_idx] *= 0.0
             post_conv1 = self.conv1(pre_conv1)
             for (from_idx, to_idx) in conns_to_remove_cur:
-                post_conv1[:, to_idx, :, :] += additives_dict_cur['conv1'][from_idx][to_idx][0]#.max() / 3
+                post_conv1[:, to_idx, :, :] += additives_dict_cur['conv1'][from_idx][to_idx][0] * mul_by_zero
                     #the last index 0 above is because the stored shape is [1,stuff], and LHS is just [stuff]
             post_conv1_bn = self.relu1(self.bn1(post_conv1))
 
@@ -624,7 +627,7 @@ class BasicBlockAvgAdditivesUser(BasicBlock):
                     self.conv2.connectivity[0][to_idx, from_idx] = 0.0
             post_conv2 = self.conv2(post_conv1_bn)
             for (from_idx, to_idx) in conns_to_remove_cur:
-                post_conv2[:, to_idx, :, :] += additives_dict_cur['conv2'][from_idx][to_idx][0]#.max() / 3
+                post_conv2[:, to_idx, :, :] += additives_dict_cur['conv2'][from_idx][to_idx][0] * mul_by_zero
             post_conv2_bn = self.bn2(post_conv2)
 
         out = post_conv2_bn
@@ -637,7 +640,7 @@ class BasicBlockAvgAdditivesUser(BasicBlock):
                 shortcut_out = shortcut_modules[0](x)
                 shortcut_out = shortcut_modules[1](shortcut_out)
                 for (from_idx, to_idx) in conns_to_remove_shortcut:
-                    shortcut_out[:, to_idx, :, :] = additives_dict_cur['shortcut'][from_idx][to_idx]
+                    shortcut_out[:, to_idx, :, :] = additives_dict_cur['shortcut'][from_idx][to_idx] * mul_by_zero
                 out += shortcut_out
             elif if_identity_shortcut:
                 conns_to_remove_shortcut = self.__class__.connections_to_remove['shortcut'][corresponding_layer_ind_conv1]
@@ -653,7 +656,7 @@ class BasicBlockAvgAdditivesUser(BasicBlock):
                         # print('Attention! replacing with 0 instead of empirical mean')
                         # shortcut_out_clone[:, to_idx, :, :] *= 0
                         # shortcut_out_clone[:, to_idx, :, :] += additives_dict_cur['shortcut_id'][to_idx][0,...]
-                        shortcut_out_clone[:, to_idx, :, :] = additives_dict_cur['shortcut_id'][to_idx]
+                        shortcut_out_clone[:, to_idx, :, :] = additives_dict_cur['shortcut_id'][to_idx] * mul_by_zero
                         shortcut_out = shortcut_out_clone
 
                 out += shortcut_out
