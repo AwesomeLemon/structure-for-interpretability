@@ -7,7 +7,6 @@ import models.groupconv2_multi_faces_resnet as groupconv_resnet
 import models.learnablegroups_multi_faces_resnet as learnablegroups_resnet
 import models.maskcon_multi_faces_resnet as maskcon_multi_faces_resnet
 import models.maskcon2_multi_faces_resnet as maskcon2_multi_faces_resnet
-import models.binmatr_multi_faces_resnet as binmatr_multi_faces_resnet
 import models.binmatr2_multi_faces_resnet as binmatr2_multi_faces_resnet
 import models.binmatr_fullconv_multi_faces_resnet as binmatr_fullconv_multi_faces_resnet
 import models.pspnet as pspnet
