@@ -151,8 +151,10 @@ def get_dataset(params, configs):
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
         ])
-        torchvision.datasets.imagenet.ARCHIVE_DICT['devkit']['url'] = \
-            "https://github.com/goodclass/PythonAI/raw/master/imagenet/ILSVRC2012_devkit_t12.tar.gz"
+        # torchvision.datasets.imagenet.ARCHIVE_DICT['devkit']['url'] = \
+        #     "https://github.com/goodclass/PythonAI/raw/master/imagenet/ILSVRC2012_devkit_t12.tar.gz"
+        # torchvision.datasets.imagenet.ARCHIVE_META['devkit']['url'] = \
+        #     "https://github.com/goodclass/PythonAI/raw/master/imagenet/ILSVRC2012_devkit_t12.tar.gz"
         val_dst = torchvision.datasets.ImageNet('/mnt/raid/data/ni/dnn/imagenet2012', split='val', transform=transform_val,
                                                 download=False)
         val_loader = torch.utils.data.DataLoader(val_dst, batch_size=int(params['batch_size'] * 4), shuffle=False, num_workers=8)

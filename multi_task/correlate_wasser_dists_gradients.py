@@ -62,20 +62,22 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class GradWassersteinCorrelator(ModelExplorer):
-    def __init__(self, save_model_path, param_file, if_pretrained_imagenet=False):
-        super().__init__(save_model_path, param_file, if_pretrained_imagenet)
+    def __init__(self, save_model_path, param_file, model_to_use='my'):
+        super().__init__(save_model_path, param_file, model_to_use)
 
     def calc_gradients_wrt_output_whole_network_all_tasks(self, loader, out_path, if_pretrained_imagenet=False,
                                                           layers = layers_bn_afterrelu,
                                                           neuron_nums=[64, 64, 64, 128, 128, 128, 128, 256, 256, 256,
-                                                                       256, 512, 512, 512, 512]
+                                                                       256, 512, 512, 512, 512],
+                                                          if_rename_layers=True
                                                           ):
         print("Warning! Assume that loader returns in i-th batch only instances of i-th class")
         # for model in self.model.values():
         #     model.zero_grad()
         #     model.eval()
 
-        target_layer_names = [layer.replace('_', '.') for layer in layers]#layers_bn_afterrelu] #+ ['feature_extractor']
+        # target_layer_names = [layer.replace('_', '.') for layer in layers]#layers_bn_afterrelu] #+ ['feature_extractor']
+        target_layer_names = [layer.replace('_', '.') if if_rename_layers else layer for layer in layers]
         # neuron_nums = [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
 
         def save_activation(activations, name, mod, inp, out):
@@ -96,7 +98,8 @@ class GradWassersteinCorrelator(ModelExplorer):
         activations = {}
         hooks = []
         for name, m in self.feature_extractor.named_modules():
-            hooks.append(m.register_forward_hook(partial(save_activation, activations, name)))
+            if name in target_layer_names:
+                hooks.append(m.register_forward_hook(partial(save_activation, activations, name)))
         hooks.append(self.feature_extractor.register_forward_hook(partial(save_activation, activations, 'feature_extractor')))
 
         layer_names_for_pd = []
@@ -173,14 +176,17 @@ class GradWassersteinCorrelator(ModelExplorer):
     def correlate_grads_with_wass_dists_per_neuron(self, df_grads_path, out_path, wass_dists_path_prefix,
                                                    if_replace_wass_dists_with_noise=False, target_indices=None,
                                                    layers=layers_bn_afterrelu, neuron_nums=[64, 64, 64, 128, 128, 128,
-                                                                        128, 256, 256, 256, 256, 512, 512, 512, 512]):
-        target_layer_names = [layer.replace('_', '.') for layer in layers]
+                                                                        128, 256, 256, 256, 256, 512, 512, 512, 512],
+                                                   if_rename_layers=True, layer_ind_additive=0):
+        # target_layer_names = [layer.replace('_', '.') for layer in layers]
+        target_layer_names = np.array([layer.replace('_', '.') if if_rename_layers else layer for layer in layers])
 
         df_grads = pd.read_pickle(df_grads_path)
         data_corrs = []
         if if_replace_wass_dists_with_noise:
             wasser_dists_np = np.random.laplace(0, 0.05, (10, 512))
         for i, layer_name in enumerate(target_layer_names):
+            i += layer_ind_additive
             print(layer_name)
             if target_indices is not None:
                 if i not in target_indices:
@@ -232,9 +238,10 @@ class GradWassersteinCorrelator(ModelExplorer):
         df_corr.to_pickle(out_path)
 
     def plot_correlation_of_grads_with_wass_dists(self, df_corr_path, layers,
-                                                  df_corr_paths_early=None, early_layers=None):
+                                                  df_corr_paths_early=None, early_layers=None, if_rename_layers=True):
         df_corr = pd.read_pickle(df_corr_path)
-        target_layer_names = [layer.replace('_', '.') for layer in layers]
+        # target_layer_names = [layer.replace('_', '.') for layer in layers]
+        target_layer_names = np.array([layer.replace('_', '.') if if_rename_layers else layer for layer in layers])
         avg_corrs = []
         for layer_name in target_layer_names:
             cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)].drop(
@@ -253,9 +260,9 @@ class GradWassersteinCorrelator(ModelExplorer):
             avg_corrs = avg_corrs_early + avg_corrs
 
         x = np.arange(len(avg_corrs))
-        plt.figure(figsize=(8*1.2, 6*1.2))
-        plt.plot(x, avg_corrs)
-        plt.xticks(x)
+        # plt.figure(figsize=(8*1.2, 6*1.2))
+        plt.plot(x, avg_corrs, '-o')
+        # plt.xticks(x)
         print(avg_corrs)
         plt.ylim(0, 1)
         plt.xlabel('Layer index')
@@ -290,12 +297,12 @@ class GradWassersteinCorrelator(ModelExplorer):
             stds = np.append(stds_early, stds)
 
         x = np.arange(len(means))
-        plt.figure(figsize=(8*1.2, 6*1.2))
-        plt.plot(x, means)
+        # plt.figure(figsize=(8*1.2, 6*1.2))
+        plt.plot(x, means, '-o')
         plt.fill_between(x, means-stds, means+stds, facecolor='orange')
         plt.ylim(0, 1)
         # plt.title('Average correlation of W.dists & gradients\n averaged over 5 runs\n ± 1 std')
-        plt.xticks(x)
+        # plt.xticks(x)
         plt.xlabel('Layer index')
         plt.ylabel('Avg. correlation')
         plt.show()
@@ -400,8 +407,9 @@ if __name__ == '__main__':
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_22_on_November_09/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_1|_1|_1|_1]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0003|connec_240_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask_layer4narrower1.json'
 
-    if_pretrained_imagenet = False
-    gwc = GradWassersteinCorrelator(save_model_path, param_file, if_pretrained_imagenet)
+    model_to_use = 'resnet18'
+    if_pretrained_imagenet = model_to_use != 'my'
+    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
     params, configs = gwc.params, gwc.configs
 
     model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
@@ -413,42 +421,50 @@ if __name__ == '__main__':
             configs = json.load(config_params)
         # params['dataset'] = 'imagenet_val'
         params['dataset'] = 'imagenet_test'
-        params['batch_size'] = 256#320
+        params['batch_size'] = 12#256#320
     print(model_name_short)
-    plt.rcParams.update({'font.size': 16})
+    plt.rcParams.update({'font.size': 17})
     # params['batch_size'] = 50/2#50/4#1000/4#26707#11246#1251#10001#
     # params['dataset'] = 'broden_val'
     _, val_loader, tst_loader = datasets.get_dataset(params, configs)
     loader = tst_loader#val_loader#
 
-    moniker = 'cifar_noskip_whole5'
-    chunks = [64, 64] + [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
-    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'grads_test_{moniker}.pkl',
-                                                         if_pretrained_imagenet, all_layers_bn_afterrelu,
-                                                          chunks)
-    # # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_pretrained_imagenet_afterrelu_test.pkl', if_pretrained_imagenet)
-    # # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_pretrained_imagenet_afterrelu_test_early.pkl',
-    # #                                                      if_pretrained_imagenet, layers=early_layers_bn_afterrelu)
-    if True:
-        gwc.correlate_grads_with_wass_dists_per_neuron(f'grads_test_{moniker}.pkl',
-                                                      f'corr_grads_test_{moniker}.pkl',
-                                                       f'wasser_dists/wasser_dist_attr_hist_{moniker}',
-                                                      if_replace_wass_dists_with_noise=False, layers=all_layers_bn_afterrelu,
-                                                       neuron_nums=chunks)
-        # ac.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test.pkl',
-        #                                               f'corr_grads_imagenet_test.pkl',
-        #                                               'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test',
-        #                                               if_replace_wass_dists_with_noise=False)
-        # ac.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test_early.pkl',
-        #                                               f'corr_grads_imagenet_test_early.pkl',
-        #                       'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test_early_and_last',
-        #                                       if_replace_wass_dists_with_noise=False, layers=early_layers_bn_afterrelu)
-    else:
-        ac.correlate_grads_with_wass_dists_per_task(f'grads_{model_name_short}.pkl', f'corr_task_grads_{model_name_short}.pkl',
-                                                      'wasser_dist_attr_hist_bettercifar10single')
-    gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_test_{moniker}.pkl', all_layers_bn_afterrelu)
-    exit()
-    # ac.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test.pkl',
+    # moniker = 'cifar_noskip_whole5'
+    # chunks = [64, 64] + [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
+    # gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'grads_test_{moniker}.pkl',
+    #                                                      if_pretrained_imagenet, all_layers_bn_afterrelu,
+    #                                                       chunks)
+    # moniker = 'efficientnet_b3'
+    # chunks = [40, 40, 40, 24, 24, 24, 24, 144, 144, 32, 576, 576, 96, 576, 576, 96, 576, 576, 136,
+    #           1392, 1392, 232, 1392, 1392, 384, 2304, 2304, 384, 1536]
+    # ls = efficientnet_layers_mod
+    # ch = chunks
+    # gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'grads_test_{moniker}.pkl',
+    #                                                      if_pretrained_imagenet, ls,
+    #                                                       ch, if_rename_layers=False)
+    # # # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_pretrained_imagenet_afterrelu_test.pkl', if_pretrained_imagenet)
+    # # # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_pretrained_imagenet_afterrelu_test_early.pkl',
+    # # #                                                      if_pretrained_imagenet, layers=early_layers_bn_afterrelu)
+    # if True:
+    #     gwc.correlate_grads_with_wass_dists_per_neuron(f'grads_test_{moniker}.pkl',
+    #                                                   f'corr_grads_test_{moniker}.pkl',
+    #                                                    f'wasser_dists/wasser_dist_attr_hist_{moniker}',
+    #                                                   if_replace_wass_dists_with_noise=False, layers=ls,
+    #                                                    neuron_nums=chunks, if_rename_layers=False)
+    #     # ac.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test.pkl',
+    #     #                                               f'corr_grads_imagenet_test.pkl',
+    #     #                                               'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test',
+    #     #                                               if_replace_wass_dists_with_noise=False)
+    #     # ac.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test_early.pkl',
+    #     #                                               f'corr_grads_imagenet_test_early.pkl',
+    #     #                       'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test_early_and_last',
+    #     #                                       if_replace_wass_dists_with_noise=False, layers=early_layers_bn_afterrelu)
+    # else:
+    #     ac.correlate_grads_with_wass_dists_per_task(f'grads_{model_name_short}.pkl', f'corr_task_grads_{model_name_short}.pkl',
+    #                                                   'wasser_dist_attr_hist_bettercifar10single')
+    # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_test_{moniker}.pkl', ls, if_rename_layers=False)
+    # exit()
+    # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test.pkl',
     #                                              layers_bn_afterrelu,
     #                                              'corr_grads_imagenet_test_early.pkl',
     #                                              early_layers_bn_afterrelu)
@@ -463,23 +479,23 @@ if __name__ == '__main__':
     #         r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
     #     ]
     # ])
-    # model_paths = [
-    #         r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-    #         r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-    #         r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-    #         r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-    #         r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-    #     ]
-    # ac.plot_correlation_of_grads_with_wass_dists_many_runs(
-    #     [f'corr_grads_test_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in model_paths],
-    #     layers_bn_afterrelu,
-    #     [f'corr_grads_test_early_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in model_paths],
-    #     early_layers_bn_afterrelu
-    # )
+    model_paths = [
+            r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+            r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+            r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+            r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+            r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+        ]
     gwc.plot_correlation_of_grads_with_wass_dists_many_runs(
-        [f'corr_grads_test_cifar_noskip_whole{i}.pkl' for i in range(1, 5 + 1)],
-        all_layers_bn_afterrelu
+        [f'corr_grads_test_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in model_paths],
+        layers_bn_afterrelu,
+        [f'corr_grads_test_early_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in model_paths],
+        early_layers_bn_afterrelu
     )
+    # gwc.plot_correlation_of_grads_with_wass_dists_many_runs(
+    #     [f'corr_grads_test_cifar_noskip_whole{i}.pkl' for i in range(1, 5 + 1)],
+    #     all_layers_bn_afterrelu
+    # )
     exit()
     #
     # grads_per_neuron = {}

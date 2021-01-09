@@ -26,9 +26,10 @@ import skimage
 import imageio
 from siren import SirenNet
 import torch.nn.functional as F
+from efficientnet_pytorch import EfficientNet
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-size_multiplier = 1#6#4 #
+size_multiplier = 4#6#4#1
 
 def rfft2d_freqs(h, w):
     """Computes 2D spectrum frequencies."""
@@ -162,7 +163,7 @@ class ClassSpecificImageGenerator():
                 print('optimize only for center neuron instead of the whole feature map')
                 self.get_target_tensor = lambda img, _: self.hook_dict[self.target_layer_name].features[:,self.neuron_idx][:,
                                                         self.hook_dict[self.target_layer_name].features.shape[-2] // 2,
-                                                    self.hook_dict[self.target_layer_name].features.shape[-1] // 2]
+                                                    self.hook_dict[self.target_layer_name].features.shape[-1] // 2].mean() # mean is for batch > 1
                 # self.get_target_tensor = lambda img, _: self.hook_dict[self.target_layer_name].features[:,
                 #                                         self.neuron_idx][:,3, 3]
             self.get_probs = lambda x, y: None
@@ -178,7 +179,7 @@ class ClassSpecificImageGenerator():
             elif self.if_cifar:
                 cifar_reg = 1e-3 * torch.norm(self.image_transformed, 1) \
                                + 1e-3 * total_variation_loss(self.image_transformed, 2)
-                reg = cifar_reg
+                reg = 0#cifar_reg
             elif self.if_imagenette:
                 reg = 0
             else: # celeba
@@ -213,7 +214,14 @@ class ClassSpecificImageGenerator():
                                 diversity_loss += cur
 
                     class_loss *= 0
-                class_loss += 1e-6**0 * diversity_loss # * 10
+                diversity_mul = 1.
+                if True:
+                    tensor_loss_power = np.log10(tensor_loss.item())
+                    diversity_loss_power = np.log10(diversity_loss.item())
+                    if diversity_loss_power > tensor_loss_power:
+                        diversity_mul *= 10 ** (tensor_loss_power - diversity_loss_power)
+                    # print(diversity_mul)
+                class_loss += 0.1 ** 0 * diversity_mul * diversity_loss # * 1e-6**0 # * 10
 
             n_step_start_force_rep = 180
             if (len(force_rep_indices) > 0) and (n_step >= n_step_start_force_rep):
@@ -263,7 +271,7 @@ class ClassSpecificImageGenerator():
         self.calculate_loss_f = lambda img, trunk_features, n_step: inner_calculate_loss_f(self, img, trunk_features,
                                                                                            n_step)
 
-        if self.if_imagenette:
+        if self.if_imagenette or not self.use_my_model:
             color_correlation_svd_sqrt = np.asarray([[0.26, 0.09, 0.02],
                                                      [0.27, 0.00, -0.05],
                                                      [0.27, -0.09, 0.03]]).astype("float32")
@@ -532,7 +540,7 @@ class ClassSpecificImageGenerator():
             recreated_im = np.uint8(recreated_im)
 
             # BGR to RGB:
-            if not (self.if_cifar or self.if_imagenette):
+            if not self.if_cifar and not self.if_imagenette and self.use_my_model: #basically, only celeba
                 recreated_im = recreated_im[:, :, [2, 1, 0]]
 
             recreated_ims.append(recreated_im)
@@ -558,7 +566,7 @@ class ClassSpecificImageGenerator():
             # TODO: DANGER! because output is not copied, if it's modified further in the forward pass, the values here will also be modified
             # (this happens with "+= shortcut")
             self.module = module
-            if 'relu2' not in self.name:
+            if 'relu2' not in self.name and '_project_conv' not in self.name and 'depthwise_conv' not in self.name:
                 self.features = output
             else:
                 self.features = input[0]
@@ -578,6 +586,7 @@ class ClassSpecificImageGenerator():
                     if layer is None:
                         # e.g. GoogLeNet's aux1 and aux2 layers
                         continue
+                    print("_".join(prefix + [name]))
                     features["_".join(prefix + [name])] = ClassSpecificImageGenerator.ModuleHook(layer, name)
                     hook_layers(layer, prefix=prefix + [name])
 
@@ -630,13 +639,13 @@ class ClassSpecificImageGenerator():
             # temp = self.processed_image.clone().cpu().detach().numpy()[0, :, :, :]
             # temp = temp.permute((1, 2, 0))
 
-            pixels_to_jitter1 = 8 #* 4
-            pixels_to_jitter2 = 4 #* 4
+            pixels_to_jitter1 = 8 * 4
+            pixels_to_jitter2 = 4 * 4
             pixels_to_pad = pixels_to_jitter1 + pixels_to_jitter2
             img_width = self.size_0
             img_height = self.size_1
             ROTATE = 40 #15 is good for celeba #25 is good for cifar # 40 is good for imagenet
-            scale_defining_const = 7
+            scale_defining_const = 7 #7
 
             # pad is 'reflect' because that's what's in colab
             self.image_transformed = apply_transformations(self.image, [
@@ -659,7 +668,7 @@ class ClassSpecificImageGenerator():
                 # lambda img: pad_to_correct_shape(img, img_width, img_height)
             ])
             # self.processed_image_transformed.data.clamp_(-1, 1)
-            self.image_transformed = torch.tanh(self.image_transformed)
+            # self.image_transformed = torch.tanh(self.image_transformed)
             # if True:
             #     self.image_transformed.register_hook(normalize_grad)
 
@@ -689,10 +698,9 @@ class ClassSpecificImageGenerator():
 
 
 if __name__ == '__main__':
-    use_my_model = False
-
+    model_to_use = 'resnet18'
     # for epoch in [7, 22, 52, 82, 112]:
-    if use_my_model:
+    if model_to_use == 'my':
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_21_on_November_27/optimizer=Adam|batch_size=256|lr=0.0005|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3___0.025|__4___0._1_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_53_on_February_11/optimizer=Adam|batch_size=256|lr=0.005|lambda_reg=0.005|chunks=[4|_4|_4]|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025_42_model.pkl'
         # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_37_on_February_19/optimizer=Adam|batch_size=256|lr=0.0005|lambda_reg=0.001|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True_6_model.pkl'
@@ -803,44 +811,56 @@ if __name__ == '__main__':
 
         hook_dict = ClassSpecificImageGenerator.hook_model(trained_model['rep'])
         model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
-
     else:
         # target_class = 130  # Flamingo
         # pretrained_model = models.alexnet(pretrained=True).to(device)
-        trained_model = models.__dict__['resnet18'](pretrained=True).to(device)
+        if model_to_use == 'resnet18':
+            trained_model = models.__dict__['resnet18'](pretrained=True).to(device)
+        # trained_model = models.__dict__['vgg19_bn'](pretrained=True).to(device)
+        if model_to_use == 'mobilenet':
+            trained_model = models.__dict__['mobilenet_v2'](pretrained=True).to(device)
+        if model_to_use == 'efficientnet':
+            trained_model = EfficientNet.from_pretrained('efficientnet-b3').cuda()
+        # trained_model = models.__dict__['vgg11_bn'](pretrained=True).to(device)
         im_size = (224, 224)
         hook_dict = ClassSpecificImageGenerator.hook_model(trained_model)
 
     if False:
         used_neurons = np.load(f'actually_good_nodes_{model_name_short}.npy', allow_pickle=True).item()
 
-    batch_size = 1
+    batch_size = 2
     n_steps = 600
     tensor_loss_mul = -1 #multiplied only by the part of the loss dependent on the features, not the whole loss
-    for j, layer_name in [(None, layers_bn_prerelu[6])]:  #[(None, 'label')]:  #  list(enumerate(layers)) + [(None, 'label')]:  #
+    l_name = layers_bn_afterrelu[10]#'_blocks_25__project_conv'#vgg_layers_few_AM[0]#'features_6'
+    # l_names = ['_blocks_15__project_conv', '_blocks_1', '_blocks_15', '_blocks_25', '_blocks_18', '_blocks_20']
+    for j, layer_name in [(None, l_name)]:#list(enumerate(layers)) + [(None, 'label')]:#
+    # for j, layer_name in enumerate(l_names):
         if layer_name != 'label':
             if False:
                 cur_neurons = used_neurons[j]
                 cur_neurons = [int(x[x.find('_') + 1:]) for x in cur_neurons]
             else:
-                cur_neurons = [84]
+                cur_neurons = [12]#[117]#range(128)#
             diversity_layer_name = layer_name
+
         else:
             cur_neurons = [8]  # range(40)  # [task_ind_from_task_name('blackhair')] #
             diversity_layer_name = layers[-1]
         for i in cur_neurons:
             print('Current: ', layer_name, i)
             # layer_name = 'layer3_1_conv1'#'layer1_1'#'layer1_1_conv1'#'label'#'layer1_0' #
-            csig = ClassSpecificImageGenerator(trained_model, (layer_name, i), im_size, batch_size, use_my_model,
-                                               hook_dict, layer_name if (batch_size > 1) else None, [], False, if_cifar=False,
-                                               if_imagenette=True, tensor_loss_mul=tensor_loss_mul)  # list(range(14)))
+            csig = ClassSpecificImageGenerator(trained_model, (layer_name, i), im_size, batch_size, model_to_use == 'my',
+                   hook_dict, layer_name if (batch_size > 1) else None, [], False,
+                   if_cifar=False, if_imagenette=False, tensor_loss_mul=tensor_loss_mul)  # list(range(14)))
             # ,diversity_layer_name)
-            generated = csig.generate(n_steps, True)
+            generated = csig.generate(n_steps, False)
 
-            if False:
-                imshow_path = 'tmp'  # f"big_ordinary_generated_imshow_{model_name_short}"
+            if True:
+                imshow_path = 'feature_viz'  # f"big_ordinary_generated_imshow_{model_name_short}"
                 Path(imshow_path).mkdir(parents=True, exist_ok=True)
-                imshow_path += f"/{layer_name}"
+                path_prefix = f'{model_to_use}_'
+                path_postfix = f'_{"max" if tensor_loss_mul == 1 else "min"}_noreg'
+                imshow_path += f"/{path_prefix}{layer_name}{path_postfix}"
                 Path(imshow_path).mkdir(parents=True, exist_ok=True)
 
                 # separate_path = f"big_ordinary_generated_separate_{model_name_short}"
@@ -850,25 +870,8 @@ if __name__ == '__main__':
                 # if False:
                 #     separate_path = 'generated_separate'
 
-                copyfile(f'generated/c_specific_iteration_{n_steps}.jpg', imshow_path + f'/{i}.jpg')
+                copyfile(f'generated/c_specific_iteration_{n_steps}.jpg', imshow_path + f'/div_{i}.jpg')
 
                 # recreated = csig.recreate_image2_batch(generated)
                 # for j in range(batch_size):
                 #     save_image(recreated[j], separate_path + f'/{i}_{j}.jpg')
-    # else:
-    #     csig = ClassSpecificImageGenerator(pretrained_model, target_class, im_size, batch_size, False)
-    #     csig.generate()
-
-    '''
-    for i, x in enumerate(rep_dict.values()):
-        curmin = 2.0
-        curmax = -2.0
-        for i in range(300):
-            for j in range(i, 300):
-                cur = x[i].dot(x[j]) / (torch.norm(x[i], p=2) * torch.norm(x[j], p=2))
-                if cur < curmin:
-                    curmin = cur
-                if cur > curmax:
-                    curmax = cur
-    print(i, f'min = {curmin} ; max = {curmax}')
-    '''

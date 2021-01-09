@@ -95,6 +95,20 @@ all_layers_bn_afterrelu = ['conv1', 'layer1_0_relu1', 'layer1_0',
                            'layer4_1_relu1', 'layer4_1',
                            ]
 
+vgg_layers_few = ['features.45', 'avgpool']
+
+vgg_layers_few_AM = ['features_45', 'avgpool']
+
+mobilenet_layers_few = ['features_15', 'features_16', 'features_17']
+
+efficientnet_layers = ['_bn0'] + sum([
+    [f'_blocks.{i}._depthwise_conv', f'_blocks.{i}._project_conv', f'_blocks.{i}'] for i in
+     list(range(3)) + list(range(11, 14)) + list(range(23, 26))], []) + ['_bn1']
+
+efficientnet_layers_mod = ['_bn0'] + sum([
+    [f'_blocks.{i}.pre_depthwise_conv', f'_blocks.{i}.pre_project_conv', f'_blocks.{i}'] for i in
+     list(range(3)) + list(range(11, 14)) + list(range(23, 26))], []) + ['_bn1']
+
 cifar10_names = ['airplane', 'automobile', 'bird', 'cat', 'deer',
                  'dog', 'frog', 'horse', 'ship', 'truck']
 fashionmnist_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
@@ -269,8 +283,8 @@ def format_np_output(np_arr):
 def save_image_batch(im_batch, path):
     fig = plt.figure()#figsize=(10, 4.5))  # (20, 5)
     im_total = len(im_batch)
-    rows_num = 2
-    cols_num = int(math.ceil(im_total / rows_num))
+    cols_num = 2#int(math.ceil(im_total / rows_num))
+    rows_num = int(math.ceil(im_total / cols_num))#2
     ax = fig.subplots(nrows=rows_num, ncols=cols_num, squeeze=False)
     plt.tight_layout()
 
@@ -327,10 +341,10 @@ def punish_outside_center(tensor):
 def images_list_to_grid_image(ims, if_rgba=False, if_draw_line=False):
     n_ims = len(ims)
     width, height = ims[0].size
-    # rows_num = math.floor(math.sqrt(n_ims))
-    # cols_num = int(math.ceil(n_ims / rows_num))
-    rows_num = 4
-    cols_num = 5
+    rows_num = math.floor(math.sqrt(n_ims))
+    cols_num = int(math.ceil(n_ims / rows_num))
+    # rows_num = 4
+    # cols_num = 5
     # rows_num = 500
     # cols_num = 20
     new_im = Image.new('RGB' if not if_rgba else 'RGBA', (cols_num * width, rows_num * height))

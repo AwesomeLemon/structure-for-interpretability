@@ -48,6 +48,7 @@ except:
     from util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
 
 from models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
+from efficientnet_pytorch import EfficientNet
 
 import glob
 from shutil import copyfile, copy
@@ -60,8 +61,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class ModelExplorer:
-    def __init__(self, save_model_path, param_file, if_pretrained_imagenet=False):
-        if not if_pretrained_imagenet:
+    def __init__(self, save_model_path, param_file, model_to_use='my'):
+        if model_to_use == 'my':
             with open(param_file) as json_params:
                 params = json.load(json_params)
             if 'input_size' not in params:
@@ -142,8 +143,14 @@ class ModelExplorer:
             use_my_model = True
         else:
             im_size = (224, 224)
-            trained_model = torchvision.models.__dict__['resnet18'](pretrained=True).to(device)
-            # trained_model = torchvision.models.__dict__['resnet34'](pretrained=True).to(device)
+            if model_to_use == 'resnet18':
+                trained_model = torchvision.models.__dict__['resnet18'](pretrained=True).to(device)
+                # trained_model = torchvision.models.__dict__['resnet34'](pretrained=True).to(device)
+                # trained_model = models.__dict__['vgg19_bn'](pretrained=True).to(device)
+            if model_to_use == 'mobilenet':
+                trained_model = torchvision.models.__dict__['mobilenet_v2'](pretrained=True).to(device)
+            if model_to_use == 'efficientnet':
+                trained_model = EfficientNet.from_pretrained('efficientnet-b3').to(device)
             model = trained_model
             self.params = None
             self.configs = None

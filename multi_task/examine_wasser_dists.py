@@ -10,8 +10,8 @@ import numpy as np
 from multi_task.load_model import load_trained_model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-experiment = 'imagenet_weights'#'baseline'#'only-lipstick'#
-if experiment in ['only-lipstick', 'baseline']:
+experiment = 'cifar-net'#'imagenet_weights'#'baseline'#'only-lipstick'#
+if experiment in ['only-lipstick', 'cifar-net']:
     save_model_path = f'pretrained_models/{experiment}.pkl'
     param_file = f'named_params/{experiment}.json'
     if_pretrained_imagenet = False
@@ -64,6 +64,6 @@ elif experiment == 'imagenet_weights':
         corrs.append(np.corrcoef(w_cur, dist_cur)[0, 1]) #scipy.stats.spearmanr(w_cur, dist_cur)[0]
     corrs = np.array(corrs)
     print(np.mean(corrs), np.std(corrs))
-elif experiment == 'baseline':
+elif experiment == 'cifar-net':
     wasser_dists = np.load('wasser_dists/wasser_dist_attr_hist_bettercifar10single_14.npy', allow_pickle=True).item()
     wasser_dists = np.array(pd.DataFrame(wasser_dists))

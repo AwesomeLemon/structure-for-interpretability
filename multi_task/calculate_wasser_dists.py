@@ -60,14 +60,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class WassersteinCalculator(ModelExplorer):
-    def __init__(self, save_model_path, param_file, if_pretrained_imagenet=False):
-        super().__init__(save_model_path, param_file, if_pretrained_imagenet)
+    def __init__(self, save_model_path, param_file, model_to_use='my'):
+        super().__init__(save_model_path, param_file, model_to_use)
 
     def find_highest_activating_images(self, loader, if_average_spatial=True, dataset_type='celeba', target_layer_indices=None,
                                        save_path='img_paths_most_activating_sorted_dict_afterrelu_fcmodel.npy', used_neurons=None,
                                        if_sort_by_path=False, if_dont_save=False, if_left_lim_zero=True, layer_list=layers_bn,
-                                       if_save_argmax_labels=False, cond_neurons=None):
-        target_layer_names = np.array([layer.replace('_', '.') for layer in layer_list] + ['label'])
+                                       if_save_argmax_labels=False, cond_neurons=None, if_rename_layers=True):
+        target_layer_names = np.array([layer.replace('_', '.') if if_rename_layers else layer for layer in layer_list] + ['label'])
         if_find_for_label = False
         if target_layer_indices is None:
             # target_layer_indices = list(range(len(target_layer_names)))
@@ -97,7 +97,9 @@ class WassersteinCalculator(ModelExplorer):
                 out = out.detach()
                 if ('bn1' in name) and if_left_lim_zero:
                     out = F.relu(out)
-                if ('relu2' in name) and not if_left_lim_zero:
+                if ('_bn0' in name or '_bn1' in name):
+                    out = out * torch.sigmoid(out) # swish
+                if ('relu2' in name or 'depthwise_conv' in name or 'project_conv' in name) and not if_left_lim_zero:
                     out = inp[0]
                 if if_average_spatial:
                     cur_activations = out.mean(dim=(-1, -2)).cpu().numpy()
@@ -111,7 +113,9 @@ class WassersteinCalculator(ModelExplorer):
         hooks = []
         sorted_dict_per_layer_per_neuron = defaultdict(lambda: defaultdict(SortedDict))
         for name, m in self.feature_extractor.named_modules():
-            hooks.append(m.register_forward_hook(partial(save_activation, activations, name)))
+            print(name)
+            if name in target_layer_names:
+                hooks.append(m.register_forward_hook(partial(save_activation, activations, name)))
 
         with torch.no_grad():
             for i, batch_val in enumerate(loader):
@@ -232,10 +236,11 @@ class WassersteinCalculator(ModelExplorer):
                                      if_cond_labels=False, df=None,
                                      out_dir='attr_hist_for_neuron_fc_all', used_neurons=None, dataset_type='celeba',
                                      if_calc_wasserstein=False, offset=(0, 0), if_show=True, if_left_lim_zero=True,
-                                            layer_list=layers_bn, if_plot=True, cond_neuron_lambda=lambda x:[x]):
+                                            layer_list=layers_bn, if_plot=True, cond_neuron_lambda=lambda x:[x], if_rename_layers=True):
         # when if_show==False, hists are plotted and saved, but not shown
         # when if_plot==False, nothing is plotted, only wasserstein distances are calculated
-        target_layer_names = [layer.replace('_', '.') for layer in layer_list] + ['label']
+        # target_layer_names = [layer.replace('_', '.') for layer in layer_list] + ['label']
+        target_layer_names = np.array([layer.replace('_', '.') if if_rename_layers else layer for layer in layer_list] + ['label'])
         if df is None:
             df = pd.read_pickle('sparse_afterrelu.pkl')
         Path(out_dir).mkdir(exist_ok=True)
@@ -306,6 +311,8 @@ class WassersteinCalculator(ModelExplorer):
 
             else:
                 raise NotImplementedError()
+        df_cond = df_cond.drop(df_cond[df_cond['layer_name'] != target_layer_names[cond_layer_idx]].index)
+        df_cond_np = np.array(df_cond)[:, 2:].astype('int')
 
         # if dataset_type == 'broden_val':
         #     print(df.columns)
@@ -370,8 +377,9 @@ class WassersteinCalculator(ModelExplorer):
                     corresponding_indices = cond_neuron_lambda(idx)
                     final_mask = np.array([False]*selected_values_list.shape[1])[None, :] #shape is number of images
                     for ind in corresponding_indices:
-                        cond_mask1 = df_cond.loc[(df_cond['layer_name'] == target_layer_names[cond_layer_idx]) &
-                                        (df_cond['neuron_idx'] == ind)].drop(['layer_name', 'neuron_idx'], axis=1) <= offset[0]
+                        # cond_mask1 = df_cond.loc[(df_cond['layer_name'] == target_layer_names[cond_layer_idx]) &
+                        #                 (df_cond['neuron_idx'] == ind)].drop(['layer_name', 'neuron_idx'], axis=1) <= offset[0]
+                        cond_mask1 = df_cond_np[ind] <= offset[0]
                         final_mask += np.array(cond_mask1)
                     selected_paths1_cache[idx] = np.array(final_mask, dtype=bool)
                 cond_mask1 = selected_paths1_cache[idx]
@@ -391,9 +399,10 @@ class WassersteinCalculator(ModelExplorer):
                     corresponding_indices = cond_neuron_lambda(idx)
                     final_mask = np.array([False] * selected_values_list.shape[1])[None, :] # shape is number of images
                     for ind in corresponding_indices:
-                        cond_mask2 = df_cond.loc[(df_cond['layer_name'] == target_layer_names[cond_layer_idx]) &
-                                                 (df_cond['neuron_idx'] == ind)].drop(['layer_name', 'neuron_idx'],
-                                                                                      axis=1) > offset[1]
+                        # cond_mask2 = df_cond.loc[(df_cond['layer_name'] == target_layer_names[cond_layer_idx]) &
+                        #                          (df_cond['neuron_idx'] == ind)].drop(['layer_name', 'neuron_idx'],
+                        #                                                               axis=1) > offset[1]
+                        cond_mask2 = df_cond_np[ind] > offset[1]
                         final_mask += np.array(cond_mask2)
                     selected_paths2_cache[idx] = np.array(final_mask, dtype=bool)
                 cond_mask2 = selected_paths2_cache[idx]
@@ -441,6 +450,7 @@ class WassersteinCalculator(ModelExplorer):
         for layer_idx, neurons in target_neurons_dict.items():
             wasser_dists_cur = np.load(f'wasser_dists/wasser_dist_{suffix}_{layer_idx}.npy', allow_pickle=True).item()
             for neuron in neurons:
+                print(neuron)
                 class_wd_pairs = [(classes_dict[idx], wd) for (idx, wd) in wasser_dists_cur[neuron].items()]
                 class_wd_pairs.sort(key=operator.itemgetter(1))
                 class_wd_pairs_best = class_wd_pairs[:n_best] + class_wd_pairs[-n_best:]
@@ -473,21 +483,18 @@ class WassersteinCalculator(ModelExplorer):
                                                     sorted_dict_path=None,
                                                     used_neurons=None, dataset_type='celeba', if_calc_wasserstein=False,
                                                     offset=(0, 0), if_show=True, if_force_recalculate=False, if_dont_save=False,
-                                                    if_left_lim_zero=True, layer_list=layers_bn, if_plot=True):
+                                                    if_left_lim_zero=True, layer_list=layers_bn, if_plot=True, if_rename_layers=True):
         '''
 
         :param target_dict: 'all_network' OR {target_layer_idx -> [neuron_indices] OR 'all'}
         :param if_cond_label: whether separate into 2 histograms by true labels (in contrast to model predictions)
         '''
         if target_dict == 'all_network':
-            target_dict = {}
-            for i in reversed(range(15)):
-            # for i in reversed(range(12)):
-                target_dict[i] = 'all'
+            target_dict = {i: 'all' for i in reversed(range(15))}
         elif target_dict == 'all_network_with_early':
-            target_dict = {}
-            for i in reversed(range(17)):
-                target_dict[i] = 'all'
+            target_dict = {i: 'all' for i in reversed(range(17))}
+        elif target_dict == 'all_network_efficientnet':
+            target_dict = {i: 'all' for i in reversed(range(29))}
         if used_neurons is not None:
             if used_neurons != 'use_target':
                 if not os.path.exists(used_neurons):
@@ -501,8 +508,21 @@ class WassersteinCalculator(ModelExplorer):
                         # chunks = [8, 8, 8, 16, 16, 16, 16, 32, 32, 32, 32, 2, 2, 2, 2]
                     elif used_neurons == 'resnet_early':
                         chunks = [64, 64]
-                    if used_neurons == 'resnet_full_with_early':
+                    elif used_neurons == 'resnet_full_with_early':
                         chunks = [64, 64, 64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
+                    elif used_neurons == 'vgg_few':
+                        chunks = [512, 512]
+                    elif used_neurons == 'mobilenet_few':
+                        chunks = [160, 160, 320]
+                    elif used_neurons == 'efficientnet':
+                        # chunks = [40, 40, 40, 24, 24, 24, 24, 144, 144, 32, 192, 192, 32, 192, 192, 32, 192, 192, 48,
+                        #           288, 288, 48, 288, 288, 48, 288, 288, 96, 576, 576, 96, 576, 576, 96, 576, 576, 96,
+                        #           576, 576, 96, 576, 576, 136, 816, 816, 136, 816, 816, 136, 816, 816, 136, 816, 816,
+                        #           136, 816, 816, 232, 1392, 1392, 232, 1392, 1392, 232, 1392, 1392, 232, 1392, 1392,
+                        #           232, 1392, 1392, 232, 1392, 1392, 384, 2304, 2304, 384, 1536]
+                        chunks = [40, 40, 40, 24, 24, 24, 24, 144, 144, 32, 576, 576, 96, 576, 576, 96, 576, 576, 136,
+                                  1392, 1392, 232, 1392, 1392, 384, 2304, 2304, 384, 1536]
+
                     used_neurons = {}
                     for idx, ch in enumerate(chunks):
                         used_neurons[idx] = np.array(range(chunks[idx]))
@@ -520,12 +540,12 @@ class WassersteinCalculator(ModelExplorer):
             cond_neurons = list(range(40))
         else:
             # cond_neurons = list(range(20))
-            # cond_neurons = list(range(10))
+            cond_neurons = list(range(10))
             # cond_neurons = [0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
             # cond_neurons = list(range(1000))#[0, 217, 482, 491, 497, 566, 569, 571, 574, 701] + list(range(1, 10)) + list(range(901, 911))
             # cond_neurons = list(range(301))
             # cond_neurons = list(range(1197))
-            cond_neurons = list(range(10))
+            # cond_neurons = list(range(10))
 
         if not os.path.exists(df_val_images_activations_path) or if_force_recalculate:
             if not os.path.exists(sorted_dict_path) or if_force_recalculate:
@@ -537,7 +557,8 @@ class WassersteinCalculator(ModelExplorer):
                                                                                      if_left_lim_zero=if_left_lim_zero,
                                                                                      layer_list=layer_list,
                                                                                      if_save_argmax_labels=offset == 'argmax',
-                                                                                     cond_neurons=cond_neurons)
+                                                                                     cond_neurons=cond_neurons,
+                                                                                     if_rename_layers=if_rename_layers)
                 print('Sorted dict calculated')
             else:
                 sorted_dict_per_layer_per_neuron = np.load(sorted_dict_path, allow_pickle=True).item()
@@ -551,8 +572,10 @@ class WassersteinCalculator(ModelExplorer):
         for layer_idx, targets in target_dict.items():
             self.compute_attr_hist_for_neuron_pandas(layer_idx, targets, -1, cond_neurons, if_cond_label, df,
                                                    out_dir_path, used_neurons, dataset_type, if_calc_wasserstein,
-                                                   offset, if_show, if_left_lim_zero, layer_list, if_plot
-                                                   #,cond_neuron_lambda=lambda x: hypernym_idx_to_imagenet_idx[x]
+                                                   offset, if_show, if_left_lim_zero, layer_list, if_plot,
+                                                   lambda x: [x],
+                                                   #cond_neuron_lambda=lambda x: hypernym_idx_to_imagenet_idx[x],
+                                                   if_rename_layers
                                                   )
 
     def convert_sorted_dict_per_layer_per_neuron_to_dataframe(self, sorted_dict_per_layer_per_neuron, out_path=None):
@@ -606,8 +629,8 @@ if __name__ == '__main__':
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_18_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4.json'
     #   single-head cifar
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
     #   no bias cifar:
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/15_55_on_September_18/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_120_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgd1_nobias_fc_batch128_weightdecay3e-4.json'
@@ -628,8 +651,8 @@ if __name__ == '__main__':
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_10_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_15_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/13_11_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/13_15_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
-    param_file = 'params/binmatr2_cifar_sgd1bias_fc_noskip_batch128_weightdecay3e-4_singletask.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/13_15_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
+    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_noskip_batch128_weightdecay3e-4_singletask.json'
     #   fine-tuned with fixed connections very sparse cifar [single head] ; AKA cifar2
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_58_on_October_02/optimizer=SGD|batch_size=128|lr=0.001|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0_240_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
@@ -668,8 +691,9 @@ if __name__ == '__main__':
     # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask_layer4narrower1.json'
 
 
-    if_pretrained_imagenet = False
-    wc = WassersteinCalculator(save_model_path, param_file, if_pretrained_imagenet)
+    model_to_use = 'my'
+    if_pretrained_imagenet = model_to_use != 'my'
+    wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
     params, configs = wc.params, wc.configs
 
     model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
@@ -679,12 +703,12 @@ if __name__ == '__main__':
             params = json.load(json_params)
         with open('configs.json') as config_params:
             configs = json.load(config_params)
-        # params['dataset'] = 'imagenet_val'
-        params['dataset'] = 'imagenet_test'
-        params['batch_size'] = 256#320
+        params['dataset'] = 'imagenet_val'
+        # params['dataset'] = 'imagenet_test'
+        params['batch_size'] = 64#128#256#320
     print(model_name_short)
 
-    plt.rcParams.update({'font.size': 16})
+    plt.rcParams.update({'font.size': 18})
     # params['batch_size'] = 50/2#50/4#1000/4#26707#11246#1251#10001#
     # params['dataset'] = 'broden_val'
     _, val_loader, tst_loader = datasets.get_dataset(params, configs)
@@ -805,21 +829,61 @@ if __name__ == '__main__':
     #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
     #                                                if_force_recalculate=False, if_dont_save=False, if_left_lim_zero=True,
     #                                                layer_list=layers_bn_afterrelu, if_plot=True)
-    moniker = 'cifar_noskip_whole5'
-    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, f'{moniker}.pkl', 'all_network_with_early',
+    # moniker = 'cifar_noskip_whole5'
+    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, f'{moniker}.pkl', 'all_network_with_early',
+    #                                                f'attr_hist_{moniker}', if_cond_label=False,
+    #                                                used_neurons='resnet_full_with_early',
+    #                                                dataset_type='cifar',
+    #                                                sorted_dict_path=f'sorted_dict_{moniker}.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
+    #                                                if_force_recalculate=False, if_left_lim_zero=True,
+    #                                                layer_list=all_layers_bn_afterrelu, if_plot=False)
+    # moniker = 'vgg_few'
+    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, f'{moniker}.pkl', {0:'all', 1:'all'},
+    #                                                f'attr_hist_{moniker}', if_cond_label=False,
+    #                                                used_neurons='vgg_few',
+    #                                                dataset_type='imagenet_test',
+    #                                                sorted_dict_path=f'sorted_dict_{moniker}.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
+    #                                                if_force_recalculate=False, if_left_lim_zero=True,
+    #                                                layer_list=vgg_layers_few, if_plot=False)
+    # moniker = 'mobilenet_few'
+    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, f'{moniker}.pkl', {0:'all', 1:'all', 2:'all'},
+    #                                                f'attr_hist_{moniker}', if_cond_label=False,
+    #                                                used_neurons='mobilenet_few',
+    #                                                dataset_type='imagenet_test',
+    #                                                sorted_dict_path=f'sorted_dict_{moniker}.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
+    #                                                if_force_recalculate=False, if_left_lim_zero=True,
+    #                                                layer_list=mobilenet_layers_few, if_plot=False)
+    # moniker = 'efficientnet_b3'
+    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, f'{moniker}.pkl', 'all_network_efficientnet',
+    #                                                f'attr_hist_{moniker}', if_cond_label=False,
+    #                                                used_neurons='efficientnet',
+    #                                                dataset_type='imagenet_test',
+    #                                                sorted_dict_path=f'sorted_dict_{moniker}.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
+    #                                                if_force_recalculate=False, if_left_lim_zero=False,
+    #                                                layer_list=efficientnet_layers, if_plot=False, if_rename_layers=False)
+    moniker = 'cifar_for_paper'
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, f'{moniker}.pkl', {5:[103]},
                                                    f'attr_hist_{moniker}', if_cond_label=False,
-                                                   used_neurons='resnet_full_with_early',
+                                                   used_neurons='use_target',
                                                    dataset_type='cifar',
                                                    sorted_dict_path=f'sorted_dict_{moniker}.npy',
                                                    if_calc_wasserstein=True, offset='argmax', if_show=False,
                                                    if_force_recalculate=False, if_left_lim_zero=True,
-                                                   layer_list=all_layers_bn_afterrelu, if_plot=False)
+                                                   layer_list=layers_bn_afterrelu, if_plot=True, if_rename_layers=True)
 
-    chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
+    # chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
     # ac.wasserstein_barplot('attr_hist_pretrained_imagenet_prerelu', dict(zip(range(15), [range(c) for c in chunks])),
     #                        imagenet_dict, n_show=20, out_path_suffix='')
     # ac.wasserstein_barplot('attr_hist_pretrained_imagenet_broden3_afterrelu', dict(zip(range(15), [range(c) for c in chunks])),
     #                        broden_categories_list, n_show=20, out_path_suffix='')
+    # wc.wasserstein_barplot(f'attr_hist_{moniker}', {0:range(160), 1:range(160), 2:range(320)},
+    #                        imagenet_dict, n_show=20, out_path_suffix='')
+    # wc.wasserstein_barplot(f'attr_hist_{moniker}', {26:range(2304)},
+    #                        imagenet_dict, n_show=20, out_path_suffix='')
 
     # ac.store_layer_activations_many(loader, [14], if_average_spatial=True, if_store_labels=True, out_path_postfix='_pretrained_imagenet')
     # ac.store_layer_activations_many(loader, list(range(15)), out_path_postfix='_bettercifar10single',
@@ -845,77 +909,6 @@ if __name__ == '__main__':
     #                                     base_path='/mnt/raid/data/chebykin/imagenet_val/my_imgs',
     #                                     image_size=224)
     exit()
-    # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'grads_test_early_{model_name_short}.pkl',
-    #                                                      if_pretrained_imagenet, early_layers_bn_afterrelu)
-    # # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_pretrained_imagenet_afterrelu_test.pkl', if_pretrained_imagenet)
-    # # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_pretrained_imagenet_afterrelu_test_early.pkl',
-    # #                                                      if_pretrained_imagenet, layers=early_layers_bn_afterrelu)
-    # if True:
-    #     ac.correlate_grads_with_wass_dists_per_neuron(f'grads_test_early_{model_name_short}.pkl',
-    #                                                   f'corr_grads_test_early_{model_name_short}.pkl',
-    #                                        'wasser_dists/wasser_dist_attr_hist_bettercifar10single5_early_and_last',
-    #                                                   if_replace_wass_dists_with_noise=False, layers=early_layers_bn_afterrelu)
-    #     # ac.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test.pkl',
-    #     #                                               f'corr_grads_imagenet_test.pkl',
-    #     #                                               'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test',
-    #     #                                               if_replace_wass_dists_with_noise=False)
-    #     # ac.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test_early.pkl',
-    #     #                                               f'corr_grads_imagenet_test_early.pkl',
-    #     #                       'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test_early_and_last',
-    #     #                                       if_replace_wass_dists_with_noise=False, layers=early_layers_bn_afterrelu)
-    # else:
-    #     ac.correlate_grads_with_wass_dists_per_task(f'grads_{model_name_short}.pkl', f'corr_task_grads_{model_name_short}.pkl',
-    #                                                   'wasser_dist_attr_hist_bettercifar10single')
-    # exit()
-    # ac.plot_correlation_of_grads_with_wass_dists(f'corr_grads_test_{model_name_short}.pkl')
-    # ac.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test.pkl',
-    #                                              layers_bn_afterrelu,
-    #                                              'corr_grads_imagenet_test_early.pkl',
-    #                                              early_layers_bn_afterrelu)
-    # ac.plot_correlation_of_grads_with_wass_dists('corr_grads_imagenet_test_early.pkl', layers=early_layers_bn_afterrelu)
-
-    # ac.plot_correlation_of_grads_with_wass_dists_many_runs([
-    #     f'corr_grads_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in [
-    #         r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-    #         r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-    #         r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-    #         r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-    #         r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-    #     ]
-    # ])
-    model_paths = [
-            r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-            r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-            r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-            r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-            r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-        ]
-    ac.plot_correlation_of_grads_with_wass_dists_many_runs(
-        [f'corr_grads_test_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in model_paths],
-        layers_bn_afterrelu,
-        [f'corr_grads_test_early_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in model_paths],
-        early_layers_bn_afterrelu
-    )
-    exit()
-    #
-    # grads_per_neuron = {}
-    # layer = 12
-    # neurons = [0, 1, 2, 3, 4]
-    # wasser_dists = np.load(f'wasser_dist_attr_hist_bettercifar10single_{layer}.npy', allow_pickle=True).item()
-    # wasser_dists_np = np.array(pd.DataFrame(wasser_dists))
-    # for neuron in neurons:
-    #     print(neuron)
-    #     w_cur = ac.model['all'].linear.weight.cpu().detach().numpy()[:, neuron]
-    #     cur_grads = []
-    #     for i in range(10):
-    #         grads = ac.calc_gradients_wrt_output(loader, layer, neuron, i)
-    #         print(f'{cifar10_dict[i]}:\t{grads:.4f}\t{w_cur[i]:.2f}'.expandtabs(15))
-    #         cur_grads.append(grads)
-    #     grads_per_neuron[neuron] = np.array(cur_grads)
-    # grads_per_neuron_np = np.array(pd.DataFrame(grads_per_neuron))
-    # for neuron in neurons:
-    #     print(np.corrcoef(wasser_dists_np[:, neuron], grads_per_neuron_np[:, neuron])[0, 1])
-    # exit()
 
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'nonsparse_afterrelu_nobiascifar.pkl', {14:'all'},
     #                                                'attr_hist_nobiascifar', if_cond_label=False,
@@ -929,14 +922,14 @@ if __name__ == '__main__':
     #                                                if_nonceleba=True,
     #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_sparsecifar.npy',
     #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False)
-    ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'lipstickonly_nonsparse_afterrelu_v2.pkl', {14:'all'},
-                                                   'attr_hist_lipstickonly_v2', if_cond_label=True,
-                                                   used_neurons='resnet_quarter',
-                                                   dataset_type='celeba',
-                                                   sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_lipstickonly_v2.npy',
-                                                   if_calc_wasserstein=True, offset='argmax', if_show=False, if_force_recalculate=True,
-                                                   if_left_lim_zero=True, layer_list=layers_bn_afterrelu
-                                                   )
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'lipstickonly_nonsparse_afterrelu_v2.pkl', {14:'all'},
+    #                                                'attr_hist_lipstickonly_v2', if_cond_label=True,
+    #                                                used_neurons='resnet_quarter',
+    #                                                dataset_type='celeba',
+    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_lipstickonly_v2.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False, if_force_recalculate=True,
+    #                                                if_left_lim_zero=True, layer_list=layers_bn_afterrelu
+    #                                                )
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'hatonly_nonsparse_afterrelu.pkl', {14:'all'},
     #                                                'attr_hist_hatonly', if_cond_label=True,
     #                                                used_neurons='resnet_quarter',

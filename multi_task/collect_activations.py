@@ -29,8 +29,8 @@ from torch.utils import data
 from util.util import *
 import pandas as pd
 import scipy.stats
-from sklearn.metrics import balanced_accuracy_score, accuracy_score
-
+from sklearn.metrics import balanced_accuracy_score, confusion_matrix, accuracy_score
+from sklearn.model_selection import train_test_split
 
 try:
     from multi_task import datasets
@@ -62,8 +62,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class ActivityCollector(ModelExplorer):
-    def __init__(self, save_model_path, param_file, if_pretrained_imagenet=False):
-        super().__init__(save_model_path, param_file, if_pretrained_imagenet)
+    def __init__(self, save_model_path, param_file, model_to_use='my'):
+        super().__init__(save_model_path, param_file, model_to_use)
 
     def img_from_np_to_torch(self, img):
         img = img[:, :, ::-1]
@@ -393,6 +393,65 @@ class ActivityCollector(ModelExplorer):
         target_layer_names = [layer.replace('_', '.') for layer in layer_list]
         df = pd.read_pickle(df_path)
         df_labels = pd.read_pickle(df_labels_path)
+        df_labels = df_labels.drop(df_labels[df_labels['layer_name'] != 'label'].index)
+        # df_labels.loc[df_labels == 0] = -1 # negative labels are "-1" in sklearn, "0" in the df_labels
+        df_labels.replace(0, -1)
+        df_labels.loc[(df['layer_name'] == 'label') & (df['neuron_idx'] == 0)] = 0 # restore the number for the 0-th label
+        df_labels_np = np.array(df_labels)[:, 2:].astype('int')
+
+        print(df_labels_np.shape)
+        chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
+        res_data = []
+        for i, target_layer_name in enumerate(target_layer_names):
+            if i == 0:
+                continue
+            for target_neuron in range(chunks[i]):
+                print(i, target_neuron)
+                target_neuron_activations = np.array(df.loc[(df['layer_name'] == target_layer_name) &
+                                                       (df['neuron_idx'] == target_neuron)].drop(['layer_name', 'neuron_idx'],
+                                                                                                 axis=1))[0].reshape(-1, 1)
+                for class_ind in range(n_classes):
+                    # if class_ind % 50 == 0:
+                    #     print(class_ind)
+                    # labels1 = np.array(df_labels.loc[(df_labels['layer_name'] == 'label') & (df_labels['neuron_idx'] == class_ind)]
+                    #                    .drop(['layer_name', 'neuron_idx'], axis=1))[0]
+                    # labels1 = np.array(df_labels.loc[(df_labels['neuron_idx'] == class_ind)])[0, 2:]
+                    # train_pos = target_neuron_activations[labels1 == 1]
+                    # lbl_pos = np.array([1] * len(train_pos))
+                    # train_neg = target_neuron_activations[labels1 != 1]
+                    # lbl_neg = np.array([-1] * len(train_neg))
+                    # data = np.hstack((train_pos, train_neg)).reshape(-1, 1)
+                    # lbl = np.hstack((lbl_pos, lbl_neg))
+                    # labels1[labels1 == 0] = -1
+                    data = target_neuron_activations
+                    lbl = df_labels_np[class_ind]#labels1.astype('int')
+
+                    clf = LogisticRegression(random_state=0, penalty='l2', class_weight="balanced")
+                    if False: # proper cross-validation takes too long on imagenet
+                        cv_results = cross_validate(clf, data, lbl, cv=5, scoring='balanced_accuracy')
+                        blncd_acc = np.mean(cv_results['test_score']) # average over folds
+                    else:
+                        X_train, X_test, y_train, y_test = train_test_split(data, lbl, test_size=0.2)
+                        clf = clf.fit(X_train, y_train)
+                        y_test_predicted = clf.predict(X_test)
+                        blncd_acc = balanced_accuracy_score(y_test, y_test_predicted)
+                    res_data.append([target_layer_name, target_neuron, class_ind, blncd_acc])
+                    # print(i, target_neuron, class_ind, blncd_acc)
+            df_res = pd.DataFrame(res_data, columns=['layer_name', 'neuron_idx', 'class_idx', 'mean_balanced_acc'])
+            df_res.to_csv('binary_separability' + postfix + f'_{i}.csv')
+
+
+    def save_diff_between_MWD_means(self, df_path, df_labels_path, layer_list, n_classes, postfix):
+        target_layer_names = [layer.replace('_', '.') for layer in layer_list]
+        df = pd.read_pickle(df_path)
+        df_labels = pd.read_pickle(df_labels_path)
+        df_labels = df_labels.drop(df_labels[df_labels['layer_name'] != 'label'].index)
+        # df_labels.loc[df_labels == 0] = -1 # negative labels are "-1" in sklearn, "0" in the df_labels
+        df_labels.replace(0, -1)
+        df_labels.loc[(df['layer_name'] == 'label') & (df['neuron_idx'] == 0)] = 0 # restore the number for the 0-th label
+        df_labels_np = np.array(df_labels)[:, 2:].astype('int')
+
+        print(df_labels_np.shape)
         chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
         res_data = []
         for i, target_layer_name in enumerate(target_layer_names):
@@ -400,25 +459,16 @@ class ActivityCollector(ModelExplorer):
                 print(i, target_neuron)
                 target_neuron_activations = np.array(df.loc[(df['layer_name'] == target_layer_name) &
                                                        (df['neuron_idx'] == target_neuron)].drop(['layer_name', 'neuron_idx'],
-                                                                                                 axis=1))[0]
+                                                                                                 axis=1))[0].reshape(-1, 1)
                 for class_ind in range(n_classes):
-                    if class_ind % 50 == 0:
-                        print(class_ind)
-                    labels1 = np.array(df_labels.loc[(df_labels['layer_name'] == 'label') & (df_labels['neuron_idx'] == class_ind)]
-                                       .drop(['layer_name', 'neuron_idx'], axis=1))[0]
-                    train_pos = target_neuron_activations[labels1 == 1]
-                    lbl_pos = np.array([1] * len(train_pos))
-                    train_neg = target_neuron_activations[labels1 != 1]
-                    lbl_neg = np.array([-1] * len(train_neg))
-                    train = np.hstack((train_pos, train_neg))
-                    lbl = np.hstack((lbl_pos, lbl_neg))
-
-                    clf = LogisticRegression(random_state=0, penalty='l2', class_weight="balanced")
-                    cv_results = cross_validate(clf, train.reshape(-1, 1), lbl, cv=5, scoring='balanced_accuracy')
-                    res_data.append([target_layer_name, target_neuron, class_ind, np.mean(cv_results['test_score'])])
-                    # print(i, target_neuron, class_ind, np.mean(cv_results['test_score']))
+                    lbl = df_labels_np[class_ind]#labels1.astype('int')
+                    train_pos = target_neuron_activations[lbl == 1]
+                    train_neg = target_neuron_activations[lbl != 1]
+                    mean_diff = train_pos.mean() - train_neg.mean()
+                    res_data.append([target_layer_name, target_neuron, class_ind, mean_diff])
+                    # print(i, target_neuron, class_ind, blncd_acc)
             df_res = pd.DataFrame(res_data, columns=['layer_name', 'neuron_idx', 'class_idx', 'mean_balanced_acc'])
-            df_res.to_csv('binary_separability' + postfix + f'_{i}.csv')
+            df_res.to_csv('diff_MWD_means' + postfix + f'_{i}.csv')
 
 
     def cluster_stored_layer_activations(self, target_layer_indices, if_average_spatial=True):
@@ -759,7 +809,6 @@ class ActivityCollector(ModelExplorer):
                 y_true += list(labels_val['all'].detach().cpu().numpy())
         y_pred = np.array(y_pred)
         y_true = np.array(y_true)
-        from sklearn.metrics import balanced_accuracy_score, confusion_matrix
         print(balanced_accuracy_score(y_true, y_pred))
         conf_matr = confusion_matrix(y_true, y_pred)
 
@@ -861,8 +910,9 @@ class ActivityCollector(ModelExplorer):
             return res
 
         for layer_idx, layer_name in zip(target_layer_indices, target_layer_names):
-            patch_size = 100
-            activation_dict = self.store_layer_activations_many(loader, [layer_idx], if_average_spatial=False, if_store_activations=False,
+            patch_size = 32
+            activation_dict = self.store_layer_activations_many(loader, [layer_idx],
+                                                                if_average_spatial=False, if_store_activations=False,
                                               layer_list=layer_list)
             activations = vstack_fast(activation_dict[layer_name])
             image_to_feature_ratio = image_size / activations.shape[2]
@@ -907,6 +957,74 @@ class ActivityCollector(ModelExplorer):
 
             del activation_dict
             del activations
+
+    def accs_barplot(self, suffix, target_neurons_dict, classes_dict, layer_list, n_show=10, if_show=False, out_path_suffix=''):
+        target_layer_names = [cur.replace('_', '.') for cur in layer_list]
+        n_best = n_show // 2
+        out_path = 'accs_barplot_' + suffix + out_path_suffix
+        Path(out_path).mkdir(exist_ok=True)
+        for layer_idx, neurons in target_neurons_dict.items():
+            # wasser_dists_cur = np.load(f'wasser_dists/wasser_dist_{suffix}_{layer_idx}.npy', allow_pickle=True).item()
+            accs_cur_df = pd.read_csv(f'binary_separability_imagenet_val_nofolds_{layer_idx}.csv')
+            mean_diffs_cur_df = pd.read_csv(f'diff_MWD_means_imagenet_val_nofolds_{layer_idx}.csv')
+            for neuron in neurons:
+                accs = np.array(accs_cur_df.loc[(accs_cur_df['layer_name'] == target_layer_names[layer_idx]) &
+                                (accs_cur_df['neuron_idx'] == neuron)].drop(['layer_name', 'neuron_idx', 'class_idx'], axis=1))[:, 1]
+                print(accs.shape)
+                mean_diffs = np.array(mean_diffs_cur_df.loc[(mean_diffs_cur_df['layer_name'] == target_layer_names[layer_idx]) &
+                                                (mean_diffs_cur_df['neuron_idx'] == neuron)].drop(
+                    ['layer_name', 'neuron_idx', 'class_idx'], axis=1))[:, 1]
+                print(mean_diffs.shape)
+                class_wd_pairs = [(classes_dict[i], accs[i] * (-1 if mean_diffs[i] < 0 else 1)) for i in range(1000)]
+                class_wd_pairs.sort(key=operator.itemgetter(1))
+                class_wd_pairs_best = class_wd_pairs[:n_best] + class_wd_pairs[-n_best:]
+                classes, wds = zip(*class_wd_pairs_best)
+
+
+
+                # width = 1 / n_show - 0.05
+                colors = ['r'] * n_best + ['g'] * n_best
+                fig, ax = plt.subplots(figsize=(5 * 1.5, 7 * 1.5), nrows=2, gridspec_kw={'height_ratios': [5, 3]})
+                title = f'{layer_idx}_{neuron}'
+                plt.suptitle(title)
+                labels = classes
+                x = np.arange(n_show)
+                ax[0].barh(x, wds, color=colors)#, width)
+                ax[0].set_yticks(x)
+                ax[0].set_yticklabels(labels)
+                ax[0].set_xlim(-1, 1)
+
+                proper_hist(np.array(list(zip(*class_wd_pairs))[1]),ax=ax[1], xlim_left=-1, xlim_right=1, bin_size=0.04)
+                ax[1].set_yscale('log')
+                ax[1].set_ylim(top=400)
+                # ax[1].hist(list(zip(*class_wd_pairs))[1])
+                # ax[1].set_xlim(-0.5, 0.5)
+                plt.savefig(f'{out_path}/{title}.png', format='png', bbox_inches='tight', pad_inches=0)
+                if if_show:
+                    plt.show()
+                plt.close()
+
+
+    def correlate_accs_with_MWDs(self, suffix, target_neurons_dict, classes_dict, layer_list, n_show=10, if_show=False, out_path_suffix=''):
+        target_layer_names = [cur.replace('_', '.') for cur in layer_list]
+        n_best = n_show // 2
+        res = []
+        for layer_idx, neurons in target_neurons_dict.items():
+            wasser_dists_cur = np.load(f'wasser_dists/wasser_dist_{suffix}_{layer_idx}.npy', allow_pickle=True).item()
+            accs_cur_df = pd.read_csv(f'binary_separability_imagenet_val_nofolds_{layer_idx}.csv')
+            mean_diffs_cur_df = pd.read_csv(f'diff_MWD_means_imagenet_val_nofolds_{layer_idx}.csv')
+            for neuron in neurons:
+                accs = np.array(accs_cur_df.loc[(accs_cur_df['layer_name'] == target_layer_names[layer_idx]) &
+                                (accs_cur_df['neuron_idx'] == neuron)].drop(['layer_name', 'neuron_idx', 'class_idx'], axis=1))[:, 1]
+                mean_diffs = np.array(mean_diffs_cur_df.loc[(mean_diffs_cur_df['layer_name'] == target_layer_names[layer_idx]) &
+                                                (mean_diffs_cur_df['neuron_idx'] == neuron)].drop(
+                    ['layer_name', 'neuron_idx', 'class_idx'], axis=1))[:, 1]
+                accs_with_signs = [accs[i] * (-1 if mean_diffs[i] < 0 else 1) for i in range(len(accs))]
+                wds = list(wasser_dists_cur[neuron].values())#[np.abs(wd) for wd in wasser_dists_cur[neuron].values()]
+                res.append(np.corrcoef(accs_with_signs, wds)[0, 1])
+            # plt.plot(cur_res, '.')
+            # plt.show()
+        print(np.mean(res), np.std(res))
 
 if __name__ == '__main__':
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_21_on_November_27/optimizer=Adam|batch_size=256|lr=0.0005|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3___0.025|__4___0._1_model.pkl'
@@ -1004,9 +1122,11 @@ if __name__ == '__main__':
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/21_22_on_November_09/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_1|_1|_1|_1]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0003|connec_240_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask_layer4narrower1.json'
 
-
-    if_pretrained_imagenet = False
-    ac, params, configs = ActivityCollector.create_activity_collector(save_model_path, param_file, if_pretrained_imagenet)
+    model_to_use = 'resnet18'
+    if_pretrained_imagenet = model_to_use != 'my'
+    # ac, params, configs = ActivityCollector.create_activity_collector(save_model_path, param_file, if_pretrained_imagenet)
+    ac = ActivityCollector(save_model_path, param_file, model_to_use)
+    params, configs = ac.params, ac.configs
 
     model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
     if if_pretrained_imagenet:
@@ -1015,8 +1135,8 @@ if __name__ == '__main__':
             params = json.load(json_params)
         with open('configs.json') as config_params:
             configs = json.load(config_params)
-        # params['dataset'] = 'imagenet_val'
-        params['dataset'] = 'imagenet_test'
+        params['dataset'] = 'imagenet_val'
+        # params['dataset'] = 'imagenet_test'
         params['batch_size'] = 256#320
     print(model_name_short)
     # ac.compare_AM_images(31, 12)
@@ -1046,7 +1166,7 @@ if __name__ == '__main__':
 
     # ac.store_highest_activating_images()
     plt.rcParams.update({'font.size': 16})
-    # params['batch_size'] = 50/2#50/4#1000/4#26707#11246#1251#10001#
+    params['batch_size'] = 128#50/2#50/4#1000/4#26707#11246#1251#10001#
     # params['dataset'] = 'broden_val'
     _, val_loader, tst_loader = datasets.get_dataset(params, configs)
     loader = val_loader#tst_loader#
@@ -1079,9 +1199,16 @@ if __name__ == '__main__':
     #                                                    layers_bn, 10, postfix='_cifar')
     # convert_imagenet_path_to_label_dict_to_df()
     # ac.assess_binary_separability_1vsAll_whole_network('pretrained_imagenet_afterrelu.pkl', 'df_label_imagenet_val.pkl',
-    #                                                    layers_bn_afterrelu, 1000, postfix='_imagenet_val')
+    #                                                    layers_bn, 1000, postfix='_imagenet_val_nofolds')
+    # ac.save_diff_between_MWD_means('pretrained_imagenet_afterrelu.pkl', 'df_label_imagenet_val.pkl',
+    #                                                    layers_bn, 1000, postfix='_imagenet_val_nofolds')
+    chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
+    # ac.accs_barplot('', dict(zip(range(15), [range(c) for c in chunks])),
+    #                        imagenet_dict, layers_bn, n_show=20, out_path_suffix='')
+    ac.correlate_accs_with_MWDs('attr_hist_pretrained_imagenet_afterrelu', dict(zip(range(15), [range(c) for c in chunks])),
+                           imagenet_dict, layers_bn, n_show=20, out_path_suffix='')
     # ac.plot_overall_hists('pretrained_imagenet_afterrelu.pkl', 'overall_hists_imagenet_afterrelu', layers_bn)
-    # exit()
+    exit()
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single_noskip_nonsparse_afterrelu.pkl',
     #                                                {10:'all', 9:'all', 8:'all', 7:'all', 6:'all', 5:'all', 4:'all', 3:'all', 2:'all', 1:'all', 0:'all'},
     #                                                'attr_hist_bettercifar10single_noskip', if_cond_label=False,
@@ -1206,14 +1333,14 @@ if __name__ == '__main__':
     #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
     #                                                if_force_recalculate=True, if_left_lim_zero=True,
     #                                                 layer_list=early_layers_and_last_bn_afterrelu)
-    ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'celeba_fc_v3.pkl', {13:'all'},
-                                                   'attr_hist_celeba_fc_v3', if_cond_label=False,
-                                                   used_neurons='resnet_full',
-                                                   dataset_type='celeba',
-                                                    sorted_dict_path='img_paths_most_activating_sorted_dict_paths_celeba_fc_v3.npy',
-                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False,
-                                                   if_force_recalculate=True, if_left_lim_zero=True,
-                                                    layer_list=layers_bn_afterrelu)
+    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'celeba_fc_v3.pkl', {13:'all'},
+    #                                                'attr_hist_celeba_fc_v3', if_cond_label=False,
+    #                                                used_neurons='resnet_full',
+    #                                                dataset_type='celeba',
+    #                                                 sorted_dict_path='img_paths_most_activating_sorted_dict_paths_celeba_fc_v3.npy',
+    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False,
+    #                                                if_force_recalculate=True, if_left_lim_zero=True,
+    #                                                 layer_list=layers_bn_afterrelu)
     # chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
     # ac.wasserstein_barplot('attr_hist_pretrained_imagenet_prerelu', dict(zip(range(15), [range(c) for c in chunks])),
     #                        imagenet_dict, n_show=20, out_path_suffix='')
@@ -1240,9 +1367,9 @@ if __name__ == '__main__':
     # ac.store_highest_activating_patches(loader, [0], out_path='patches_bettercifar10single',
     #                                     base_path='/mnt/raid/data/chebykin/cifar/my_imgs',
     #                                     image_size=32)
-    # ac.store_highest_activating_patches(loader, [10], out_path='patches_imagenet',
-    #                                     base_path='/mnt/raid/data/chebykin/imagenet_val/my_imgs',
-    #                                     image_size=224)
+    ac.store_highest_activating_patches(loader, [0], out_path='patches_imagenet',
+                                        base_path='/mnt/raid/data/chebykin/imagenet_val/my_imgs',
+                                        image_size=224)
     exit()
     # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'grads_test_early_{model_name_short}.pkl',
     #                                                      if_pretrained_imagenet, early_layers_bn_afterrelu)
