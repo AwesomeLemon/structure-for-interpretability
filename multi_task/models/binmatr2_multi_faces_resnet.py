@@ -447,7 +447,11 @@ class BasicBlockAvgAdditivesCreator(BasicBlock):
     expansion = 1
     id = 0
     additives_dict = {}
-    used_neurons = np.load('actually_good_nodes.npy', allow_pickle=True).item()
+    try:
+        used_neurons = np.load('actually_good_nodes.npy', allow_pickle=True).item()
+    except:
+        # a horrible hack, but it works
+        used_neurons = 'Failed to load good nodes; irrelevant unless you want to use this class'
 
     @staticmethod
     def get_indices_of_used_neurons(layer_ind):
