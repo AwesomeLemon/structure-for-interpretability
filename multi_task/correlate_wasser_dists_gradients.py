@@ -177,7 +177,8 @@ class GradWassersteinCorrelator(ModelExplorer):
                                                    if_replace_wass_dists_with_noise=False, target_indices=None,
                                                    layers=layers_bn_afterrelu, neuron_nums=[64, 64, 64, 128, 128, 128,
                                                                         128, 256, 256, 256, 256, 512, 512, 512, 512],
-                                                   if_rename_layers=True, layer_ind_additive=0):
+                                                   if_rename_layers=True, layer_ind_additive=0,
+                                                   if_only_for_negative_mwds=False):
         # target_layer_names = [layer.replace('_', '.') for layer in layers]
         target_layer_names = np.array([layer.replace('_', '.') if if_rename_layers else layer for layer in layers])
 
@@ -215,7 +216,13 @@ class GradWassersteinCorrelator(ModelExplorer):
                 #     continue
                 cur_grads = np.array(df_grads.loc[(df_grads['layer_name'] == layer_name)
                              & (df_grads['neuron_idx'] == neuron)].drop(['layer_name', 'neuron_idx'], axis=1))
-                cur_corr = np.corrcoef(wasser_dists_np[:, neuron], cur_grads.squeeze())[0, 1]
+                mwds_neuron = wasser_dists_np[:, neuron]
+                cur_grads = cur_grads.squeeze()
+                if if_only_for_negative_mwds:
+                    idx = mwds_neuron < 0
+                    mwds_neuron = mwds_neuron[idx]
+                    cur_grads = cur_grads[idx]
+                cur_corr = np.corrcoef(mwds_neuron, cur_grads)[0, 1]
                 # cur_corr = scipy.stats.spearmanr(wasser_dists_np[:, neuron], cur_grads.squeeze())[0]
                 data_corrs.append([layer_name, neuron, cur_corr])
         df_corr = pd.DataFrame(data_corrs, columns=['layer_name', 'neuron_idx', 'corr'])
@@ -238,7 +245,8 @@ class GradWassersteinCorrelator(ModelExplorer):
         df_corr.to_pickle(out_path)
 
     def plot_correlation_of_grads_with_wass_dists(self, df_corr_path, layers,
-                                                  df_corr_paths_early=None, early_layers=None, if_rename_layers=True):
+                                                  df_corr_paths_early=None, early_layers=None, if_rename_layers=True,
+                                                  if_show=True):
         df_corr = pd.read_pickle(df_corr_path)
         # target_layer_names = [layer.replace('_', '.') for layer in layers]
         target_layer_names = np.array([layer.replace('_', '.') if if_rename_layers else layer for layer in layers])
@@ -261,13 +269,15 @@ class GradWassersteinCorrelator(ModelExplorer):
 
         x = np.arange(len(avg_corrs))
         # plt.figure(figsize=(8*1.2, 6*1.2))
-        plt.plot(x, avg_corrs, '-o')
+        plt.plot(x, avg_corrs, '-o', label=df_corr_path.replace('.pkl', ''))
         # plt.xticks(x)
         print(avg_corrs)
         plt.ylim(0, 1)
         plt.xlabel('Layer index')
         plt.ylabel('Avg. correlation')
-        plt.show()
+        if if_show:
+            plt.legend()
+            plt.show()
 
     def plot_correlation_of_grads_with_wass_dists_many_runs(self, df_corr_paths, layers,
                                                             df_corr_paths_early=None, early_layers=None):
@@ -306,6 +316,75 @@ class GradWassersteinCorrelator(ModelExplorer):
         plt.xlabel('Layer index')
         plt.ylabel('Avg. correlation')
         plt.show()
+
+    def plot_grads_and_wass_dists(self, df_grads_path, out_path, wass_dists_path_prefix,
+                                                   if_replace_wass_dists_with_noise=False, target_indices=None,
+                                                   layers=layers_bn_afterrelu, neuron_nums=[64, 64, 64, 128, 128, 128,
+                                                                        128, 256, 256, 256, 256, 512, 512, 512, 512],
+                                                   if_rename_layers=True, layer_ind_additive=0,
+                                                   if_only_for_negative_mwds=False):
+        # target_layer_names = [layer.replace('_', '.') for layer in layers]
+        target_layer_names = np.array([layer.replace('_', '.') if if_rename_layers else layer for layer in layers])
+
+        df_grads = pd.read_pickle(df_grads_path)
+        data_corrs = []
+        if if_replace_wass_dists_with_noise:
+            wasser_dists_np = np.random.laplace(0, 0.05, (10, 512))
+        for i, layer_name in enumerate(target_layer_names):
+            i += layer_ind_additive
+            print(layer_name)
+            if target_indices is not None:
+                if i not in target_indices:
+                    continue
+            if not if_replace_wass_dists_with_noise:
+                wasser_dists = np.load(f'{wass_dists_path_prefix}_{i}.npy', allow_pickle=True).item()
+                wasser_dists_np = np.array(pd.DataFrame(wasser_dists))
+                # wasser_dists_np[wasser_dists_np > 0] = 0
+            # else:
+            #     if True:
+            #         wasser_dists_np = np.random.laplace(0, 0.05, (10, neuron_nums[i]))
+            #     else:
+            #         wasser_dists = np.load(f'{wass_dists_path_prefix}_{i}.npy', allow_pickle=True).item()
+            #         wasser_dists_np = np.array(pd.DataFrame(wasser_dists))
+            #         def shuffle_along_axis(a, axis):
+            #             idx = np.random.rand(*a.shape).argsort(axis=axis)
+            #             return np.take_along_axis(a, idx, axis=axis)
+            #         wasser_dists_np = shuffle_along_axis(wasser_dists_np, axis=1)
+            plt.figure(figsize=(10, 10))
+            mwds_neuron_all = []
+            cur_grads_all = []
+            for neuron in range(neuron_nums[i]):
+                print(neuron)
+                if neuron >= wasser_dists_np.shape[1]:
+                    print('Something strange is afoot', neuron, wasser_dists_np.shape[1])
+                    data_corrs.append([layer_name, neuron, 0])
+                    break
+                # if (np.abs(wasser_dists_np[:, neuron]) >= 0.09).sum() < 3:
+                #     continue
+                cur_grads = np.array(df_grads.loc[(df_grads['layer_name'] == layer_name)
+                             & (df_grads['neuron_idx'] == neuron)].drop(['layer_name', 'neuron_idx'], axis=1))
+                mwds_neuron = wasser_dists_np[:, neuron]
+                cur_grads = cur_grads.squeeze()
+                if if_only_for_negative_mwds:
+                    idx = mwds_neuron < 0
+                    mwds_neuron = mwds_neuron[idx]
+                    cur_grads = cur_grads[idx]
+                # plt.scatter(mwds_neuron, cur_grads, marker='.', alpha=0.5)
+                mwds_neuron_all.append(mwds_neuron)
+                cur_grads_all.append(cur_grads)
+                # if neuron > 100:
+                #     break
+            mwds_neuron_all = np.concatenate(mwds_neuron_all)
+            print(mwds_neuron_all.shape)
+            cur_grads_all = np.concatenate(cur_grads_all)
+            print(cur_grads_all.shape)
+            plt.scatter(mwds_neuron_all, cur_grads_all, marker='.', alpha=0.5)
+            plt.xlabel('MWDs')
+            plt.ylabel('Gradients')
+            # plt.title(f'Neurons with negative MWDs, layer {i}, corr={np.corrcoef(mwds_neuron_all, cur_grads_all)[0, 1]:.2f}')
+            plt.title(f'Neurons with all MWDs, layer {i}, corr={np.corrcoef(mwds_neuron_all, cur_grads_all)[0, 1]:.2f}')
+            # plt.xlim(-0.01, 0.01)
+            plt.show()
 
 if __name__ == '__main__':
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_21_on_November_27/optimizer=Adam|batch_size=256|lr=0.0005|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3___0.025|__4___0._1_model.pkl'
@@ -426,8 +505,9 @@ if __name__ == '__main__':
     plt.rcParams.update({'font.size': 17})
     # params['batch_size'] = 50/2#50/4#1000/4#26707#11246#1251#10001#
     # params['dataset'] = 'broden_val'
-    _, val_loader, tst_loader = datasets.get_dataset(params, configs)
-    loader = tst_loader#val_loader#
+    if False:
+        _, val_loader, tst_loader = datasets.get_dataset(params, configs)
+        loader = tst_loader#val_loader#
 
     # moniker = 'cifar_noskip_whole5'
     # chunks = [64, 64] + [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
@@ -463,7 +543,22 @@ if __name__ == '__main__':
     #     ac.correlate_grads_with_wass_dists_per_task(f'grads_{model_name_short}.pkl', f'corr_task_grads_{model_name_short}.pkl',
     #                                                   'wasser_dist_attr_hist_bettercifar10single')
     # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_test_{moniker}.pkl', ls, if_rename_layers=False)
-    # exit()
+
+    # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test.pkl', layers_bn_afterrelu, if_rename_layers=True)
+    # gwc.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test.pkl',
+    #                                           f'corr_grads_imagenet_test_negonly.pkl',
+    #                                           'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test',
+    #                                           if_replace_wass_dists_with_noise=False, if_only_for_negative_mwds=True)
+    # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test.pkl', layers_bn_afterrelu, if_rename_layers=True, if_show=False)
+    # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test_negonly.pkl', layers_bn_afterrelu, if_rename_layers=True)
+
+    gwc.plot_grads_and_wass_dists('grads_pretrained_imagenet_afterrelu_test.pkl',
+                                                   f'corr_grads_imagenet_test_negonly.pkl',
+                                                   'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test',
+                                                   if_replace_wass_dists_with_noise=False,
+                                                   if_only_for_negative_mwds=False,
+                                  layers=[layers_bn_afterrelu[9]], layer_ind_additive=9)
+    exit()
     # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test.pkl',
     #                                              layers_bn_afterrelu,
     #                                              'corr_grads_imagenet_test_early.pkl',

@@ -158,11 +158,13 @@ class ActivityCollector(ModelExplorer):
 
     def store_layer_activations_many(self, loader, target_layer_indices, if_average_spatial=True, out_path_postfix='',
                                      if_save_separately=True, if_store_labels=False, if_store_layer_names=False,
-                                     layer_list=layers, if_store_activations=True):
+                                     layer_list=layers, if_store_activations=True, if_left_lim_zero=True):
         target_layer_names = [layer_list[target_layer_idx].replace('_', '.') for target_layer_idx in target_layer_indices]
         activations = {}
 
         def save_activation(activations, name, mod, inp, out):
+            if ('relu2' in name) and not if_left_lim_zero:
+                out = inp[0]
             if if_average_spatial:
                 cur_activations = out.mean(dim=(-1, -2)).detach().cpu().numpy()
             else:
@@ -192,11 +194,14 @@ class ActivityCollector(ModelExplorer):
 
                 val_images = batch_val[0].cuda()
                 self.feature_extractor(val_images)
+                # if i == 10:
+                #     break
 
         for hook in hooks:
             hook.remove()
 
         if if_store_activations:
+            print('saving activations')
             if if_save_separately:
                 if if_store_layer_names:
                     raise NotImplementedError()
@@ -207,6 +212,9 @@ class ActivityCollector(ModelExplorer):
                         filename = f'activations_on_validation_preserved_spatial_{idx}{out_path_postfix}.npy'
                     with open(filename, 'wb') as f:
                         pickle.dump(np.vstack(activations[target_layer_names[i]]), f, protocol=4)
+                    # 03.10.2021: try to spare memory, save via numpy => it worked, but I uncommented the stuff above
+                    #                           to avoid replication problems
+                    # np.save(filename, np.vstack(activations[target_layer_names[i]]))
             else:
                 if not if_store_layer_names:
                     filename = 'representatives_kmeans14_50_alllayers.npy'
@@ -215,6 +223,7 @@ class ActivityCollector(ModelExplorer):
                     filename = f'activations_on_validation_preserved_spatial_{out_path_postfix}.npy'
                     np.save(filename, (target_layer_names, activations), allow_pickle=True)
         if if_store_labels:
+            print('saving labels')
             np.save(f'labels{out_path_postfix}.npy', labels)
 
         return activations
@@ -835,6 +844,23 @@ class ActivityCollector(ModelExplorer):
                 proper_hist(acts_for_layer_stacked[:, neuron_idx], title=f'{layer_idx}_{neuron_idx}', if_determine_bin_size=True)
                 plt.savefig(f'{out_path}/{layer_idx}_{neuron_idx}.png', format='png', bbox_inches='tight', pad_inches=0)
                 plt.close()
+                xy = None
+                '''
+                neuron_idx = 2#8
+                fig = plt.figure(figsize=(4.5, 2.5))
+                ax = fig.gca()
+                percentile05 = np.percentile(acts_for_layer_stacked[:, neuron_idx], 0.5)
+                percentile5 = np.percentile(acts_for_layer_stacked[:, neuron_idx], 5)
+                proper_hist(acts_for_layer_stacked[:, neuron_idx], title=f'0.5 percentile = {percentile05:.2f}\n'
+                                                                         f'5 percentile = {percentile5:.2f}',
+                                            if_determine_bin_size=False, bin_size=0.02, xlim_right=3, ax=ax)
+                plt.xlabel('Activation')
+                plt.ylabel('Count')
+                axes = plt.gca()
+                axes.get_yaxis().set_ticks([])
+                plt.savefig(f'{out_path}/{layer_idx}_{neuron_idx}.png', format='png', bbox_inches='tight', pad_inches=0)
+                plt.show()
+                '''
 
     def plot_hists_of_spatial_activations_no_save(self, loader, target_layer_indices,
                                          out_path='hist_spatial_bettercifar10single', layer_list=layers_bn_afterrelu,
@@ -1026,6 +1052,144 @@ class ActivityCollector(ModelExplorer):
             # plt.show()
         print(np.mean(res), np.std(res))
 
+    def find_negative_neurons_for_classes(self, loader, target_layer_indices, if_average_spatial=False,
+                                          if_store_labels=True, layer_list=layers_bn_prerelu, if_left_lim_zero=False):
+        target_layer_names = [layer_list[target_layer_idx].replace('_', '.') for target_layer_idx in target_layer_indices]
+        assert len(target_layer_names) == 1
+        activations = {}
+
+        def save_activation(activations, name, mod, inp, out):
+            if ('relu2' in name) and not if_left_lim_zero:
+                out = inp[0]
+            if if_average_spatial:
+                cur_activations = out.mean(dim=(-1, -2)).detach().cpu().numpy()
+            else:
+                cur_activations = out.detach().cpu().numpy()
+            # old version:
+            # if name in activations:
+            #     cur_activations = np.append(activations[name], cur_activations, axis=0)
+            # activations[name] = cur_activations
+            # new version:
+            if name not in activations:
+                activations[name] = [cur_activations]
+            else:
+                activations[name].append(cur_activations)
+
+        hooks = []
+        for name, m in self.feature_extractor.named_modules():
+            if name in target_layer_names:
+                hooks.append(m.register_forward_hook(partial(save_activation, activations, name)))
+
+        labels = []
+        with torch.no_grad():
+            for i, batch_val in enumerate(loader):
+
+                if if_store_labels:
+                    labels += list(np.array(batch_val[-1]))
+
+                val_images = batch_val[0].cuda()
+                self.feature_extractor(val_images)
+                # if i == 10:
+                #     break
+
+        for hook in hooks:
+            hook.remove()
+
+        labels = np.array(labels)
+
+        acts = np.vstack(activations[target_layer_names[0]])
+        assert len(acts.shape) == 4
+        n_neurons = acts.shape[1]
+
+        # Option A: avg is negative
+        # this gives a lot of neurons
+        # acts_avg = np.mean(acts, axis=(-1, -2))
+        # acts_neg = acts_avg <= 0
+
+        # Option B: threshold is 0.01 instead of 0.0
+        # this stricter version doesn't
+        # acts_neg_full = acts <= 0.01
+        # acts_neg_sum = np.sum(acts_neg_full, axis=(-1, -2))
+        # acts_neg = acts_neg_sum == acts.shape[-1] * acts.shape[-2] # all are True
+
+        # Option C: threshold 0.0, but allow some positive values
+        # fraction_positives_to_allow = 0.5
+        # acts_neg_full = acts <= 0.0
+        # acts_neg_sum = np.sum(acts_neg_full, axis=(-1, -2))
+        # acts_neg = acts_neg_sum >= acts.shape[-1] * acts.shape[-2] * fraction_positives_to_allow
+        #
+        # for c in np.unique(labels):
+        #     a = acts_neg[labels == c]
+        #     res = np.all(a, axis=0)
+        #     for i, r in enumerate(res):
+        #         if r:
+        #             print(f'{target_layer_names} ; class {c} ; neuron {i}')
+
+        # Option C2: many fractions
+        acts_neg_full = acts <= 0.0
+        acts_neg_sum = np.sum(acts_neg_full, axis=(-1, -2))
+
+
+        fractions_positives_to_allow = [0.8, 0.9, 0.92, 0.94, 0.96, 0.98, 0.99]
+        frac_to_n_neurons = {}
+        for frac in fractions_positives_to_allow:
+            acts_neg = acts_neg_sum >= acts.shape[-1] * acts.shape[-2] * frac
+            cur = 0
+            for c in np.unique(labels):
+                a = acts_neg[labels == c]
+                if_neurons_are_negative_for_the_class = np.all(a, axis=0)
+                cur += np.sum(if_neurons_are_negative_for_the_class)
+            frac_to_n_neurons[frac] = cur
+
+        return frac_to_n_neurons
+
+
+    def find_negative_neurons_for_classes_all_layers(self, loader, if_average_spatial=False,
+                                          if_store_labels=True, layer_list=layers_bn_prerelu, if_left_lim_zero=False):
+        for i in range(len(layer_list)):
+            print(f'Layer {i}')
+            frac_to_n_neurons = self.find_negative_neurons_for_classes(loader, [i], layer_list=layer_list, if_average_spatial=if_average_spatial,
+                                                   if_store_labels=if_store_labels, if_left_lim_zero=if_left_lim_zero)
+            pickle.dump(frac_to_n_neurons, open(f'layer_{i}_frac_to_neurons.pkl', 'wb'))
+            plt.bar(list(map(str, frac_to_n_neurons.keys())), frac_to_n_neurons.values(), width=0.4)
+            plt.yscale('log')
+            plt.xlabel('Percent negative values')
+            plt.ylabel('Number of neuron+class combinations')
+            plt.title(f'Layer {i}')
+            plt.savefig(f'layer_{i}_frac_to_neurons.png', format='png', bbox_inches='tight', pad_inches=0)
+            plt.show()
+
+    def plot_n_negative_neurons_for_classes_for_all_layers(self, chunks, layer_list=layers_bn_prerelu):
+        frac_to_n_neurons_per_layer = defaultdict(list)
+        for i in range(len(layer_list)):
+            d = pickle.load(open(f'layer_{i}_frac_to_neurons.pkl', 'rb'))
+            for f, n_neurons in d.items():
+                # frac_to_n_neurons_per_layer[f].append(n_neurons)
+                frac_to_n_neurons_per_layer[f].append(n_neurons / (chunks[i] * 1000))
+
+
+        layer_indices = list(range(len(layer_list)))
+
+
+        prop_cycle_backup = plt.rcParams["axes.prop_cycle"]
+        n_fracs = len(frac_to_n_neurons_per_layer.keys())
+        plt.rcParams["axes.prop_cycle"] = plt.cycler("color", plt.cm.viridis(np.linspace(0, 1, n_fracs)))
+        plt.figure(figsize=(8, 5))
+        for f, n_neurons_per_layer in frac_to_n_neurons_per_layer.items():
+            plt.plot(layer_indices, n_neurons_per_layer, '-o', label=str(f))
+        plt.yscale('symlog')
+        plt.xticks(layer_indices)
+        plt.xlabel('Layer index')
+        plt.ylabel('Number of neuron+class combinations')
+        ax = plt.gca()
+        box = ax.get_position()
+        ax.set_position([box.x0, box.y0, box.width * 0.9, box.height])
+        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        plt.grid(axis='y')
+        plt.show()
+
+        plt.rcParams["axes.prop_cycle"] = prop_cycle_backup
+
 if __name__ == '__main__':
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_21_on_November_27/optimizer=Adam|batch_size=256|lr=0.0005|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025|__2___0.025|__3___0.025|__4___0._1_model.pkl'
     # save_model_path = r'/mnt/raid/data/chebykin/saved_models/16_53_on_February_11/optimizer=Adam|batch_size=256|lr=0.005|lambda_reg=0.005|chunks=[4|_4|_4]|dataset=celeba|normalization_type=none|algorithm=no_smart_gradient_stuff|use_approximation=True|scales={_0___0.025|__1___0.025_42_model.pkl'
@@ -1205,9 +1369,25 @@ if __name__ == '__main__':
     chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
     # ac.accs_barplot('', dict(zip(range(15), [range(c) for c in chunks])),
     #                        imagenet_dict, layers_bn, n_show=20, out_path_suffix='')
-    ac.correlate_accs_with_MWDs('attr_hist_pretrained_imagenet_afterrelu', dict(zip(range(15), [range(c) for c in chunks])),
-                           imagenet_dict, layers_bn, n_show=20, out_path_suffix='')
+    # ac.correlate_accs_with_MWDs('attr_hist_pretrained_imagenet_afterrelu', dict(zip(range(15), [range(c) for c in chunks])),
+    #                        imagenet_dict, layers_bn, n_show=20, out_path_suffix='')
+    # ac.store_layer_activations_many(loader, [0], if_average_spatial=False, if_store_labels=False, if_save_separately=False,
+    #                                 out_path_postfix='pretrained_imagenet_afterrelu_again2', if_store_layer_names=True)
+    # ac.store_layer_activations_many(loader, [0], if_average_spatial=False, if_store_labels=False, if_save_separately=False,
+    #                                 out_path_postfix='pretrained_imagenet_prerelu_again2', if_store_layer_names=True,
+    #                                 layer_list=layers_bn_prerelu, if_left_lim_zero=False)
+    # ac.plot_hists_of_spatial_activations(path='activations_on_validation_preserved_spatial_pretrained_imagenet_afterrelu_again2.npy',
+    #                                              out_path='hist_spatial_imagenet_afterrelu_again',
+    #                                              layer_list=layers_bn_afterrelu[0:1], chunks=chunks)
+    # ac.plot_hists_of_spatial_activations(path='activations_on_validation_preserved_spatial_pretrained_imagenet_prerelu_again2.npy',
+    #                                              out_path='hist_spatial_imagenet_prerelu_again',
+    #                                              layer_list=layers_bn_prerelu[0:1], chunks=chunks)
     # ac.plot_overall_hists('pretrained_imagenet_afterrelu.pkl', 'overall_hists_imagenet_afterrelu', layers_bn)
+    # ac.store_layer_activations_many(loader, [6], if_average_spatial=False, if_store_labels=False, if_save_separately=True,
+    #                                 out_path_postfix='_pretrained_imagenet', if_store_layer_names=False)
+    # ac.find_negative_neurons_for_classes(loader, [10], if_average_spatial=False, if_store_labels=True, layer_list=layers_bn_prerelu)
+    # ac.find_negative_neurons_for_classes_all_layers(loader, if_average_spatial=False, if_store_labels=True, layer_list=layers_bn_prerelu)
+    ac.plot_n_negative_neurons_for_classes_for_all_layers(chunks)
     exit()
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single_noskip_nonsparse_afterrelu.pkl',
     #                                                {10:'all', 9:'all', 8:'all', 7:'all', 6:'all', 5:'all', 4:'all', 3:'all', 2:'all', 1:'all', 0:'all'},

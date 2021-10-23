@@ -1,5 +1,6 @@
 import json
 import pickle
+import time
 
 from pathlib import Path
 
@@ -153,19 +154,20 @@ def create_areas_array(folder_name, fun_names, layer_inds):
 
 def make_predictions(model, loaded_activations, if_disable, disable_ind=None):
     with torch.no_grad():
-        acts = loaded_activations.clone().cuda()
+        acts = loaded_activations.clone()#.cuda()
         if if_disable:
             acts[:, disable_ind] = 0  # 10 * acts_avg[i]#
 
         y_pred = []
-        n_batches = 10
+        n_batches = 40
         n_samples = acts.shape[0]
         batch_size = int(np.ceil(n_samples / n_batches))
         for i in range(n_batches):
-            x = acts[i * batch_size:(i+1) * batch_size, :]
-            # x = model.layer4(x)
-            # x = model.avgpool(x)
-            # x = torch.flatten(x, 1)
+            x = acts[i * batch_size:(i+1) * batch_size, :].cuda()
+            x = model.layer3(x) # for layer 6
+            x = model.layer4(x)
+            x = model.avgpool(x)
+            x = torch.flatten(x, 1)
 
             x = model.fc(x)
             y_pred_cur = torch.argmax(x, dim=1).detach().cpu().numpy()
@@ -183,29 +185,37 @@ def sort_neurons_for_class(wasser_dists_values, target_class):
 def plot_prec_recall_change(save_model_path, param_file,
                           # saved_activations_path='activations_on_validation_preserved_spatial_10_pretrained_imagenet.npy',
                           saved_activations_path='activations_on_validation_14_pretrained_imagenet.npy',
-                            saved_labels_path='labels_pretrained_imagenet.npy', wd_path=None):
+                            saved_labels_path='labels_pretrained_imagenet.npy', wd_path=None,
+                            l1_norms=None):
 
     model = reload_model(save_model_path, param_file)
-    with open(saved_activations_path, 'rb') as f:
-        loaded_activations = torch.tensor(pickle.load(f))
+    print(saved_activations_path)
+    # works for layers 10 & 14:
+    # with open(saved_activations_path, 'rb') as f:
+    #     loaded_activations = torch.tensor(pickle.load(f))
+    # works for layer 6:
+    loaded_activations = torch.tensor(np.load(saved_activations_path))
+
     labels = np.load(saved_labels_path)
     wasser_dists_values = list(np.load(wd_path, allow_pickle=True).item().values())
+    # print('Attention! What I do to get last linear weights only works for the pretrained imagenet model')
+    # fc_weights = model.fc.weight.detach().cpu().numpy()
 
     y_pred = make_predictions(model, loaded_activations, if_disable=False)
     conf_matr = confusion_matrix(labels, y_pred)
     precision_before, recall_before = conf_matr.diagonal() / conf_matr.sum(axis=0), conf_matr.diagonal() / conf_matr.sum(axis=1)
 
-    n_neurons = 512
+    print('Attention! Reduced n_neurons!')
+    n_neurons = 128 # 256 #512
     n_classes = 1000
-    n_neurons_to_disable = [32]#[1, 4, 8, 16, 32, 64, 128]#[16, 32]#[8, 16]#
-    neuron_sorting_funs = [lambda wasser_dists_values, idx: np.random.permutation(n_neurons),
-                            lambda wasser_dists_values, idx: np.array(sort_neurons_for_class(wasser_dists_values, idx)[0][::-1]),
-                            lambda wasser_dists_values, idx: sort_neurons_for_class(wasser_dists_values, idx)[0],
-                           ]
-    neuron_sorting_fun_names = ['random',
-                                'sort-max',
-                                'sort-min'
-                                ]
+    n_neurons_to_disable = [96]#[1, 4, 8, 16, 32, 64, 128]#[16, 32]#[16, 32]#[8, 16]#
+    neuron_sorting_fun_names, neuron_sorting_funs = zip(*[
+        ('random', lambda wasser_dists_values, idx: np.random.permutation(n_neurons)),
+        ('sort-max', lambda wasser_dists_values, idx: np.array(sort_neurons_for_class(wasser_dists_values, idx)[0][::-1])),
+        ('sort-min', lambda wasser_dists_values, idx: sort_neurons_for_class(wasser_dists_values, idx)[0]),
+        # ('sort-l1-lastlayer', lambda _, idx: np.argsort(fc_weights[idx])[::-1]), # this is sort-l1 for the last layer
+        ('sort-l1', lambda _, idx: np.argsort(l1_norms))# this is sort-l1 for non-last layers
+    ])
     precision_means = np.zeros((len(neuron_sorting_funs), len(n_neurons_to_disable)))
     recall_means = np.zeros((len(neuron_sorting_funs), len(n_neurons_to_disable)))
     precision_stds = np.zeros((len(neuron_sorting_funs), len(n_neurons_to_disable)))
@@ -217,12 +227,15 @@ def plot_prec_recall_change(save_model_path, param_file,
             r_diffs = []
             for class_idx in range(n_classes):
                 print(class_idx)
+                st = time.time()
                 cur_idx = list(sorting_fun(wasser_dists_values, class_idx)[:n_to_disable])
                 # x = loaded_activations.clone().cuda()
                 # x[:, cur_idx] = 0
                 # x = model.fc(x)
                 # conf_matr = confusion_matrix(labels, torch.argmax(x, dim=1).detach().cpu().numpy())
-                y_pred = make_predictions(model, loaded_activations, if_disable=True, disable_ind=cur_idx)
+                if (neuron_sorting_fun_names[i] != 'sort-l1') or (neuron_sorting_fun_names[i] == 'sort-l1' and class_idx == 0):
+                    # don't recompute for l1 because it's the same for every class
+                    y_pred = make_predictions(model, loaded_activations, if_disable=True, disable_ind=cur_idx)
                 conf_matr = confusion_matrix(labels, y_pred)
                 p, r = conf_matr.diagonal() / conf_matr.sum(axis=0), conf_matr.diagonal() / conf_matr.sum(axis=1)
                 p = np.nan_to_num(p)
@@ -230,17 +243,21 @@ def plot_prec_recall_change(save_model_path, param_file,
                 r_diff = r[class_idx] - recall_before[class_idx]
                 p_diffs.append(p_diff)
                 r_diffs.append(r_diff)
+                ed = time.time()
+                print(f'time={ed - st}')
 
             precision_means[i, j] = np.mean(p_diffs)
             recall_means[i, j] = np.mean(r_diffs)
             precision_stds[i, j] = np.std(p_diffs)
             recall_stds[i, j] = np.std(r_diffs)
 
+
             # plt.rcParams.update({'font.size': 17})
             # proper_hist(np.array(p_diffs), bin_size=0.02)
             # plt.savefig('prec_change32_hist.png', format='png')
             # plt.show()
 
+    save_postfix = 'layer6_disabled_96'
     plt.title('Precision change')
     plt.xlabel('Units ablated')
     # plt.xscale('log')
@@ -250,7 +267,7 @@ def plot_prec_recall_change(save_model_path, param_file,
         plt.errorbar(n_neurons_to_disable, precision_means[i], yerr=precision_stds[i],
                      label=neuron_sorting_fun_names[i], capsize=5)
     plt.legend()
-    plt.savefig(f'prec_change.png', format='png')
+    plt.savefig(f'prec_change_{save_postfix}.png', format='png')
     plt.show()
 
     plt.title('Recall change')
@@ -262,13 +279,59 @@ def plot_prec_recall_change(save_model_path, param_file,
         plt.errorbar(n_neurons_to_disable, recall_means[i], yerr=recall_stds[i],
                      label=neuron_sorting_fun_names[i], capsize=5)
     plt.legend()
-    plt.savefig(f'rec_change.png', format='png')
+    plt.savefig(f'rec_change_{save_postfix}.png', format='png')
     plt.show()
-    np.save('prec_means2.npy', precision_means)
-    np.save('recall_means2.npy', recall_means)
-    np.save('prec_stds2.npy', precision_stds)
-    np.save('recall_stds2.npy', recall_stds)
+    np.save(f'prec_means_{save_postfix}.npy', precision_means)
+    np.save(f'recall_means_{save_postfix}.npy', recall_means)
+    np.save(f'prec_stds_{save_postfix}.npy', precision_stds)
+    np.save(f'recall_stds_{save_postfix}.npy', recall_stds)
+    info = {'neuron_sorting_fun_names':neuron_sorting_fun_names, 'n_neurons_to_disable':n_neurons_to_disable}
+    np.save(f'info_{save_postfix}.npy', info)
 
+    print(precision_means, precision_stds)
+    print(recall_means, recall_stds)
+
+
+def load_and_plot_prec_and_recall_change():
+    # save_postfixes = [f'layer10_disabled_{i}' for i in [8, 16, 32, 64, 128, 192]]
+    save_postfixes = [f'layer6_disabled_{i}' for i in [4, 8, 16, 32, 64, 96]]
+    prec_means_all, prec_stds_all, recall_means_all, recall_stds_all = [], [], [], []
+    n_neurons_to_disable = []
+    for save_postfix in save_postfixes:
+        pm = np.load(f'prec_means_{save_postfix}.npy')
+        ps = np.load(f'prec_stds_{save_postfix}.npy')
+        rm = np.load(f'recall_means_{save_postfix}.npy')
+        rs = np.load(f'recall_stds_{save_postfix}.npy')
+        info = np.load(f'info_{save_postfix}.npy', allow_pickle=True).item()
+        neuron_sorting_fun_names = info['neuron_sorting_fun_names']
+        n_neurons_to_disable += info['n_neurons_to_disable']
+
+        prec_means_all.append(pm)
+        prec_stds_all.append(ps)
+        recall_means_all.append(rm)
+        recall_stds_all.append(rs)
+    def f(x):
+        return np.concatenate(x, axis=1)
+    prec_means_all, prec_stds_all, recall_means_all, recall_stds_all = f(prec_means_all), f(prec_stds_all), f(recall_means_all), f(recall_stds_all)
+    plt.title('Precision change')
+    plt.xlabel('Units ablated')
+    plt.xticks(n_neurons_to_disable)
+    for i in range(prec_means_all.shape[0]):
+        plt.errorbar(n_neurons_to_disable, prec_means_all[i], yerr=prec_stds_all[i],
+                     label=neuron_sorting_fun_names[i], capsize=5)
+    plt.legend()
+    plt.savefig(f'prec_change_combined.png', format='png')
+    plt.show()
+
+    plt.title('Recall change')
+    plt.xlabel('Units ablated')
+    plt.xticks(n_neurons_to_disable)
+    for i in range(recall_means_all.shape[0]):
+        plt.errorbar(n_neurons_to_disable, recall_means_all[i], yerr=recall_stds_all[i],
+                     label=neuron_sorting_fun_names[i], capsize=5)
+    plt.legend()
+    plt.savefig(f'recall_change_combined.png', format='png')
+    plt.show()
 
 def ablate_neurons_based_on_saved_activations(save_model_path, param_file,
                                               # saved_activations_path='activations_on_validation_preserved_spatial_10_pretrained_imagenet.npy',
@@ -376,6 +439,8 @@ def ablate_neurons_based_on_saved_activations(save_model_path, param_file,
     y = 1
 
 if __name__ == '__main__':
+    load_and_plot_prec_and_recall_change()
+    exit()
     #   single-head cifar
     save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
     param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
@@ -404,9 +469,12 @@ if __name__ == '__main__':
     #                 saved_activations_path='activations_on_validation_preserved_spatial_10_pretrained_imagenet.npy',
     #                 wd_path='wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_prerelu_' + str(10) + '.npy')
     # exit()
+    layer_idx = 6 # 10 #14
     plot_prec_recall_change(save_model_path, param_file,
-                            saved_activations_path='activations_on_validation_14_pretrained_imagenet.npy',
-                            wd_path='wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test_' + str(14) + '.npy')
+                            # saved_activations_path=f'activations_on_validation_{layer_idx}_pretrained_imagenet.npy',
+                            saved_activations_path=f'activations_on_validation_preserved_spatial_{layer_idx}_pretrained_imagenet.npy',
+                            wd_path=f'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test_{layer_idx}.npy',
+                            l1_norms=list(l1_norms_dict[usual_layer_idx_to_l1_norms_idx[layer_idx].replace('ordinary_conv.', '')].values()))
     exit()
     # plot_ablation_strategy_comparisons(model_name_short, ['sum', 'max', 'max+min', 'min'], range(15))
     # exit()

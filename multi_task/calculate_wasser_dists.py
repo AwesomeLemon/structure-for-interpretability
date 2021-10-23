@@ -373,6 +373,8 @@ class WassersteinCalculator(ModelExplorer):
                         else:
                             raise NotImplementedError()
 
+                        title = 'Class: ' + title
+
                 if idx not in selected_paths1_cache:
                     corresponding_indices = cond_neuron_lambda(idx)
                     final_mask = np.array([False]*selected_values_list.shape[1])[None, :] #shape is number of images
@@ -393,7 +395,7 @@ class WassersteinCalculator(ModelExplorer):
                 if if_plot:
                     proper_hist(selected_values_list1, bin_size=bin_size, ax=axs[cond_i], xlim_left=xlim_left,
                             xlim_right=xlim_right,
-                            density=True)
+                            density=True, label='class not predicted')
 
                 if idx not in selected_paths2_cache:
                     corresponding_indices = cond_neuron_lambda(idx)
@@ -420,14 +422,20 @@ class WassersteinCalculator(ModelExplorer):
                         (selected_values_list2 - selected_values_min) / (selected_values_max - selected_values_min))
                     wd_normed *= np.sign(selected_values_list2.mean() - selected_values_list1.mean())
                     if if_plot:
-                        title += f'\n{wd_normed:.2f}'
+                        title += f'\nMWD: {wd_normed:.2f}'
                     wasserstein_dists_dict[target_neuron][idx] = wd_normed
 
 
                 if if_plot:
                     proper_hist(selected_values_list2, bin_size=bin_size, ax=axs[cond_i], xlim_left=xlim_left,
                             xlim_right=xlim_right,
-                            alpha=0.75, title=title, density=True)
+                            alpha=0.75, title=title, density=True, label='class predicted')
+                    axs[cond_i].set_xlabel('Mean activation')
+                    axs[cond_i].set_ylabel('Density')
+                    # axs[cond_i].set_frame_on(False)
+                    axs[cond_i].get_yaxis().set_ticks([])
+                    # axs[cond_i].get_yaxis().set_visible(False)
+                    axs[cond_i].legend()
 
 
 
@@ -435,7 +443,7 @@ class WassersteinCalculator(ModelExplorer):
                 plot_name = f'{target_layer_idx}_{target_neuron}'
                 plt.suptitle(plot_name)
                 plt.tight_layout()
-                plt.savefig(f'{out_dir}/hist_{plot_name}.png', format='png', bbox_inches='tight', pad_inches=0)
+                plt.savefig(f'{out_dir}/hist_{plot_name}.png', format='png')#, bbox_inches='tight', pad_inches=0)
                 if if_show:
                     plt.show()
                 plt.close()
@@ -866,13 +874,13 @@ if __name__ == '__main__':
     #                                                if_force_recalculate=False, if_left_lim_zero=False,
     #                                                layer_list=efficientnet_layers, if_plot=False, if_rename_layers=False)
     moniker = 'cifar_for_paper'
-    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, f'{moniker}.pkl', {5:[103]},
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, f'{moniker}.pkl', {5:[103], 14:[393]},
                                                    f'attr_hist_{moniker}', if_cond_label=False,
                                                    used_neurons='use_target',
                                                    dataset_type='cifar',
                                                    sorted_dict_path=f'sorted_dict_{moniker}.npy',
-                                                   if_calc_wasserstein=True, offset='argmax', if_show=False,
-                                                   if_force_recalculate=False, if_left_lim_zero=True,
+                                                   if_calc_wasserstein=True, offset='argmax', if_show=True,
+                                                   if_force_recalculate=True, if_left_lim_zero=True,
                                                    layer_list=layers_bn_afterrelu, if_plot=True, if_rename_layers=True)
 
     # chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]

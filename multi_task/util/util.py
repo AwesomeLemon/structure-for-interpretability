@@ -360,7 +360,7 @@ def images_list_to_grid_image(ims, if_rgba=False, if_draw_line=False):
 
 
 def proper_hist(data, title='', ax=None, xlim_left=None, xlim_right=None, bin_size=0.1, alpha=1, density=None,
-                if_determine_bin_size=False):
+                if_determine_bin_size=False, label=None):
     data = data.flatten() # increases speed dramatically
     if if_determine_bin_size:
         bin_size = bin_size
@@ -377,11 +377,11 @@ def proper_hist(data, title='', ax=None, xlim_left=None, xlim_right=None, bin_si
     if np.max(data) - np.min(data) == 0:
         bins = None
     if ax is None:
-        plt.hist(data, bins, alpha=alpha, density=density)
+        plt.hist(data, bins, alpha=alpha, density=density, label=label)
         plt.xlim(left=xlim_left, right=xlim_right)
         plt.title(title)
     else:
-        ax.hist(data, bins, alpha=alpha, density=density)
+        ax.hist(data, bins, alpha=alpha, density=density, label=label)
         ax.set_xlim(left=xlim_left, right=xlim_right)
         ax.set_title(title)
 
