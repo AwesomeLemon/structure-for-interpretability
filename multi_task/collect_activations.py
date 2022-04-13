@@ -1215,6 +1215,72 @@ class ActivityCollector(ModelExplorer):
 
         return frac_to_neuron_to_classes
 
+    def find_negative_neurons_for_classes_no_aggregation_inspect_average(self, loader, target_layer_indices, if_average_spatial=True,
+                                                         if_store_labels=True, layer_list=layers_bn_prerelu, if_left_lim_zero=False):
+        target_layer_names = [layer_list[target_layer_idx].replace('_', '.') for target_layer_idx in target_layer_indices]
+        assert len(target_layer_names) == 1
+        activations = {}
+
+        def save_activation(activations, name, mod, inp, out):
+            if ('relu2' in name) and not if_left_lim_zero:
+                out = inp[0]
+            if if_average_spatial:
+                cur_activations = out.mean(dim=(-1, -2)).detach().cpu().numpy()
+            else:
+                cur_activations = out.detach().cpu().numpy()
+            if name not in activations:
+                activations[name] = [cur_activations]
+            else:
+                activations[name].append(cur_activations)
+
+        hooks = []
+        for name, m in self.feature_extractor.named_modules():
+            if name in target_layer_names:
+                hooks.append(m.register_forward_hook(partial(save_activation, activations, name)))
+
+        labels = []
+        with torch.no_grad():
+            for i, batch_val in enumerate(loader):
+
+                if if_store_labels:
+                    labels += list(np.array(batch_val[-1]))
+
+                val_images = batch_val[0].cuda()
+                self.feature_extractor(val_images)
+                # if i == 10:
+                #     break
+                if i % 10 == 0:
+                    print(i)
+
+        for hook in hooks:
+            hook.remove()
+
+        labels = np.array(labels)
+
+        acts = np.vstack(activations[target_layer_names[0]])
+        assert len(acts.shape) == 2
+        n_neurons = acts.shape[1]
+
+        acts_avg_neg = acts < 0
+
+        # acts_avg_neg = np.mean(acts, axis=(-1, -2)) < 0
+
+        fractions_positives_to_allow = [0.8, 0.9, 0.92, 0.94, 0.96, 0.98, 0.99, 1.0]
+        frac_to_neuron_to_classes = defaultdict(dict)
+        for frac in fractions_positives_to_allow:
+            for c in np.unique(labels):
+                n_samples_for_class = np.sum(labels == c)
+                acts_cur = acts_avg_neg[labels == c]
+                idx_neg_neurons = np.sum(acts_cur, axis=0) >= frac * n_samples_for_class
+                for neuron in np.arange(n_neurons)[idx_neg_neurons]:
+                    if neuron not in frac_to_neuron_to_classes[frac]:
+                        frac_to_neuron_to_classes[frac][neuron] = [] # defaultdict of defaultdicts is hard to store
+                    frac_to_neuron_to_classes[frac][neuron].append(c)
+            if frac not in frac_to_neuron_to_classes:
+                frac_to_neuron_to_classes[frac] = {}
+
+        return frac_to_neuron_to_classes
+
 
     def find_negative_neurons_for_classes_all_layers(self, loader, if_average_spatial=False,
                                           if_store_labels=True, layer_list=layers_bn_prerelu, if_left_lim_zero=False):
@@ -1245,6 +1311,22 @@ class ActivityCollector(ModelExplorer):
             plt.title(f'Layer {i}')
             plt.savefig(f'layer_{i}_frac_to_neuron_to_classes.png', format='png', bbox_inches='tight', pad_inches=0)
             plt.show()
+
+    def find_negative_neurons_for_classes_all_layers_no_aggregation_inspect_average(self, loader, if_average_spatial=False,
+                                                                    if_store_labels=True, layer_list=layers_bn_prerelu, if_left_lim_zero=False):
+        for i in range(len(layer_list)):
+            print(f'Layer {i}')
+            frac_to_neuron_to_classes = self.find_negative_neurons_for_classes_no_aggregation_inspect_average(loader, [i], layer_list=layer_list, if_average_spatial=if_average_spatial,
+                                                                                              if_store_labels=if_store_labels, if_left_lim_zero=if_left_lim_zero)
+            pickle.dump(frac_to_neuron_to_classes, open(f'layer_{i}_frac_to_neuron_to_classes_inspect_avg.pkl', 'wb'))
+            plt.bar(list(map(str, frac_to_neuron_to_classes.keys())), np.sum([len(v) for v in frac_to_neuron_to_classes.values()]), width=0.4)
+            plt.yscale('log')
+            plt.xlabel('Percent negative values')
+            plt.ylabel('Number of neuron+class combinations')
+            plt.title(f'Layer {i}')
+            plt.savefig(f'layer_{i}_frac_to_neuron_to_classes_inspect_avg.png', format='png', bbox_inches='tight', pad_inches=0)
+            plt.show()
+
 
     def plot_n_negative_neurons_for_classes_for_all_layers(self, chunks, layer_list=layers_bn_prerelu):
         frac_to_n_neurons_per_layer = defaultdict(list)
@@ -1305,6 +1387,44 @@ class ActivityCollector(ModelExplorer):
         plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
         plt.grid(axis='y')
         plt.savefig('ratio_neurons_coding_for_negative.png', bbox_inches='tight', pad_inches=0)
+        plt.show()
+
+        plt.rcParams["axes.prop_cycle"] = prop_cycle_backup
+
+
+    def plot_n_negative_neurons_for_classes_for_all_layers_no_aggregation_inspect_average(self, chunks, layer_list=layers_bn_prerelu):
+        frac_to_n_neurons_per_layer = defaultdict(list)
+        for i in range(len(layer_list)):
+            d = pickle.load(open(f'layer_{i}_frac_to_neuron_to_classes_inspect_avg.pkl', 'rb'))
+            for f, neurons_to_classes in d.items():
+                # this line reproduces the old graph - to make sure that the number are consistent
+                # frac_to_n_neurons_per_layer[f].append(np.sum([len(cl_list) for cl_list in neurons_to_classes.values()]) / (chunks[i] * 1000))
+                # this is the new graph
+                # frac_to_n_neurons_per_layer[f].append(len(neurons_to_classes) / chunks[i])
+                # frac_to_n_neurons_per_layer[f].append(len([neuron for neuron, class_list in neurons_to_classes.items() if len(class_list) <= 1]) / chunks[i])
+                frac_to_n_neurons_per_layer[f].append(len([neuron for neuron, class_list in neurons_to_classes.items() if len(class_list) <= 1]))
+
+        layer_indices = list(range(len(layer_list)))
+
+
+        prop_cycle_backup = plt.rcParams["axes.prop_cycle"]
+        n_fracs = len(frac_to_n_neurons_per_layer.keys())
+        plt.rcParams["axes.prop_cycle"] = plt.cycler("color", plt.cm.viridis(np.linspace(0, 1, n_fracs)))
+        plt.figure(figsize=(8, 5))
+        for f, n_neurons_per_layer in frac_to_n_neurons_per_layer.items():
+            plt.plot(layer_indices, n_neurons_per_layer, '-o', label=str(f))
+        plt.yscale('symlog')
+        plt.xticks(layer_indices)
+        plt.xlabel('Layer index')
+        # plt.title('Proportion of neurons with >= 1 negative class')
+        # plt.title('Proportion of neurons with >= 1 negative class, but <= 1')
+        plt.title('Count of neurons with >= 1 negative class, but <= 1')
+        ax = plt.gca()
+        box = ax.get_position()
+        ax.set_position([box.x0, box.y0, box.width * 0.9, box.height])
+        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        plt.grid(axis='y')
+        plt.savefig('ratio_neurons_coding_for_negative_avg.png', bbox_inches='tight', pad_inches=0)
         plt.show()
 
         plt.rcParams["axes.prop_cycle"] = prop_cycle_backup
@@ -1507,9 +1627,12 @@ if __name__ == '__main__':
     # ac.find_negative_neurons_for_classes(loader, [10], if_average_spatial=False, if_store_labels=True, layer_list=layers_bn_prerelu)
     # ac.find_negative_neurons_for_classes_all_layers(loader, if_average_spatial=False, if_store_labels=True, layer_list=layers_bn_prerelu)
     # ac.plot_n_negative_neurons_for_classes_for_all_layers(chunks)
-    # ac.find_negative_neurons_for_classes_return_sep(loader, [10], if_average_spatial=False, if_store_labels=True, layer_list=layers_bn_prerelu)
-    # ac.find_negative_neurons_for_classes_all_layers_return_sep(loader, if_average_spatial=False, if_store_labels=True, layer_list=layers_bn_prerelu)
-    ac.plot_n_negative_neurons_for_classes_for_all_layers_no_aggregation(chunks)
+    # ac.find_negative_neurons_for_classes_no_aggregation(loader, [10], if_average_spatial=False, if_store_labels=True, layer_list=layers_bn_prerelu)
+    # ac.find_negative_neurons_for_classes_all_layers_no_aggregation(loader, if_average_spatial=False, if_store_labels=True, layer_list=layers_bn_prerelu)
+    # ac.plot_n_negative_neurons_for_classes_for_all_layers_no_aggregation(chunks)
+    # ac.find_negative_neurons_for_classes_no_aggregation_inspect_average(loader, [10], if_average_spatial=True, if_store_labels=True, layer_list=layers_bn_prerelu)
+    # ac.find_negative_neurons_for_classes_all_layers_no_aggregation_inspect_average(loader, if_average_spatial=True, if_store_labels=True, layer_list=layers_bn_prerelu)
+    ac.plot_n_negative_neurons_for_classes_for_all_layers_no_aggregation_inspect_average(chunks)
     exit()
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single_noskip_nonsparse_afterrelu.pkl',
     #                                                {10:'all', 9:'all', 8:'all', 7:'all', 6:'all', 5:'all', 4:'all', 3:'all', 2:'all', 1:'all', 0:'all'},
