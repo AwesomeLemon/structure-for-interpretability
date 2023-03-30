@@ -4,3 +4,9 @@ __pycache__/
 
 # C extensions
 *.so
+
+# raw files
+**/*.pkl
+**/*.png
+**/*.svg
+**/*.npy
