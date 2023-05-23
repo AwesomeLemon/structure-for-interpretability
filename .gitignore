@@ -10,3 +10,12 @@ __pycache__/
 **/*.png
 **/*.svg
 **/*.npy
+*.csv
+bak/list_attr_celeba.txt
+local_storage
+stored_activations
+
+# vscode stuff
+.vscode/launch.json
+multi_task/util/try_collect_activations.py
+list_attr_celeba.txt
