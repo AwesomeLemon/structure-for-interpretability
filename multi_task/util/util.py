@@ -1,4 +1,5 @@
 from collections import defaultdict
+from pathlib import Path
 
 import math
 import operator
@@ -61,6 +62,7 @@ layers_bn = ['layer1_0',
              'layer4_1_bn1', 'layer4_1',
              ]
 
+# relu2 extracts the activations (ingoing? CHECK!) of the second relu -> requires changing basicblock or monkey patching
 layers_bn_prerelu = ['layer1_0_relu2',
              'layer1_1_bn1', 'layer1_1_relu2',
              'layer2_0_bn1', 'layer2_0_relu2',
@@ -360,7 +362,7 @@ def images_list_to_grid_image(ims, if_rgba=False, if_draw_line=False):
 
 
 def proper_hist(data, title='', ax=None, xlim_left=None, xlim_right=None, bin_size=0.1, alpha=1, density=None,
-                if_determine_bin_size=False, label=None):
+                if_determine_bin_size=False, label=None, title_fontsize=20):
     data = data.flatten() # increases speed dramatically
     if if_determine_bin_size:
         bin_size = bin_size
@@ -379,11 +381,11 @@ def proper_hist(data, title='', ax=None, xlim_left=None, xlim_right=None, bin_si
     if ax is None:
         plt.hist(data, bins, alpha=alpha, density=density, label=label)
         plt.xlim(left=xlim_left, right=xlim_right)
-        plt.title(title)
+        plt.title(title, fontsize=title_fontsize)
     else:
         ax.hist(data, bins, alpha=alpha, density=density, label=label)
         ax.set_xlim(left=xlim_left, right=xlim_right)
-        ax.set_title(title)
+        ax.set_title(title, fontsize=title_fontsize)
 
 
 def recreate_image_nonceleba_batch(img, dataset_type='cifar'):
@@ -551,8 +553,10 @@ def store_path_to_label_dict_cifar(loader, store_path):
     df.to_pickle(store_path)
 
 
-def convert_imagenet_path_to_label_dict_to_df():
-    path_to_label_dict = np.load('path_to_label_dict_imagenet_val_val.npy', allow_pickle=True).item()
+def convert_imagenet_path_to_label_dict_to_df(path_prefix=''):
+    path_prefix = Path(path_prefix)
+    
+    path_to_label_dict = np.load(path_prefix/'path_to_label_dict_imagenet_val_val.npy', allow_pickle=True).item()
     path_label_items = list(path_to_label_dict.items())
     path_label_items.sort(key=operator.itemgetter(0))
     per_label_dict = defaultdict(list)
@@ -565,4 +569,4 @@ def convert_imagenet_path_to_label_dict_to_df():
         data.append(['label', i, *per_label_dict[i]])
         # df_cond.loc['label', i
     df_label = pd.DataFrame(data, columns=['layer_name', 'neuron_idx'] + list(list(zip(*path_label_items))[0]))
-    df_label.to_pickle('df_label_imagenet_val.pkl')
+    df_label.to_pickle(path_prefix/'df_label_imagenet_val.pkl')

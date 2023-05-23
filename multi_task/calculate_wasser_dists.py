@@ -1,3 +1,4 @@
+from audioop import reverse
 import operator
 
 import io
@@ -23,6 +24,7 @@ import torch
 from PIL import Image, ImageFont
 from PIL import ImageDraw
 from matplotlib import pyplot as plt
+plt.style.use('seaborn-paper')
 from sortedcontainers import SortedDict
 from torch.nn.functional import softmax
 from torch.utils import data
@@ -57,6 +59,43 @@ import math
 import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def wasserstein_divergence(u_values, v_values, u_weights=None, v_weights=None):
+        # Adapted from scipy.stats.wasserstein_distance and _cdf_distance
+        u_values, u_weights = scipy.stats.stats._validate_distribution(u_values, u_weights)
+        v_values, v_weights = scipy.stats.stats._validate_distribution(v_values, v_weights)
+
+        u_sorter = np.argsort(u_values)
+        v_sorter = np.argsort(v_values)
+
+        all_values = np.concatenate((u_values, v_values))
+        all_values.sort(kind='mergesort')
+
+        # Compute the differences between pairs of successive values of u and v.
+        deltas = np.diff(all_values)
+
+        # Get the respective positions of the values of u and v among the values of
+        # both distributions.
+        u_cdf_indices = u_values[u_sorter].searchsorted(all_values[:-1], 'right')
+        v_cdf_indices = v_values[v_sorter].searchsorted(all_values[:-1], 'right')
+
+        # Calculate the CDFs of u and v using their weights, if specified.
+        if u_weights is None:
+            u_cdf = u_cdf_indices / u_values.size
+        else:
+            u_sorted_cumweights = np.concatenate(([0], np.cumsum(u_weights[u_sorter])))
+            u_cdf = u_sorted_cumweights[u_cdf_indices] / u_sorted_cumweights[-1]
+
+        if v_weights is None:
+            v_cdf = v_cdf_indices / v_values.size
+        else:
+            v_sorted_cumweights = np.concatenate(([0],
+                                                np.cumsum(v_weights[v_sorter])))
+            v_cdf = v_sorted_cumweights[v_cdf_indices] / v_sorted_cumweights[-1]
+
+        # Compute the value of the integral based on the CDFs.
+        # Removes the np.abs to compute a divergence.
+        return np.sum(np.multiply(u_cdf - v_cdf, deltas))
 
 
 class WassersteinCalculator(ModelExplorer):
@@ -147,12 +186,16 @@ class WassersteinCalculator(ModelExplorer):
                                 cur_path = root_path + f'/{cnt}.jpg'
                                 cnt += 1
                                 cur_img = recreated_images[j]
-                                save_image(cur_img, cur_path)
+                                # save_image(cur_img, cur_path)
                                 im_paths.append(cur_path)
                                 im_paths_to_labels_dict[cur_path] = batch_val[1][j].item()
                             else:
                                 cur_path = im_paths[j]
-                        for k in used_neurons_cur:
+                        if used_neurons_cur == 'all':
+                            used_neurons_cur_ = range(acts.shape[1])
+                        else:
+                            used_neurons_cur_ = used_neurons_cur
+                        for k in used_neurons_cur_:
                             if not if_sort_by_path:
                                 sorted_dict_per_layer_per_neuron[layer][k][acts[j][k]] = cur_path
                             else:
@@ -232,11 +275,12 @@ class WassersteinCalculator(ModelExplorer):
 
 
     def compute_attr_hist_for_neuron_pandas(self, target_layer_idx, target_neurons,
-                                     cond_layer_idx, cond_neurons,
-                                     if_cond_labels=False, df=None,
-                                     out_dir='attr_hist_for_neuron_fc_all', used_neurons=None, dataset_type='celeba',
-                                     if_calc_wasserstein=False, offset=(0, 0), if_show=True, if_left_lim_zero=True,
-                                            layer_list=layers_bn, if_plot=True, cond_neuron_lambda=lambda x:[x], if_rename_layers=True):
+                                            cond_layer_idx, cond_neurons,
+                                            if_cond_labels=False, df=None,
+                                            out_dir='attr_hist_for_neuron_fc_all', used_neurons=None, dataset_type='celeba',
+                                            if_calc_wasserstein=False, offset=(0, 0), if_show=True, if_left_lim_zero=True,
+                                            layer_list=layers_bn, if_plot=True, cond_neuron_lambda=lambda x: [x], if_rename_layers=True,
+                                            use_wasserstein_divergence=False):
         # when if_show==False, hists are plotted and saved, but not shown
         # when if_plot==False, nothing is plotted, only wasserstein distances are calculated
         # target_layer_names = [layer.replace('_', '.') for layer in layer_list] + ['label']
@@ -321,7 +365,13 @@ class WassersteinCalculator(ModelExplorer):
 
         selected_paths1_cache = {}
         selected_paths2_cache = {}
-        for target_neuron in target_neurons:
+
+        if isinstance(target_neurons, str) and target_neurons == 'all':
+            target_neurons_ = np.unique(df['neuron_idx'])
+        else:
+            target_neurons_ = target_neurons
+
+        for target_neuron in target_neurons_:
             print(target_neuron)
             if if_plot:
                 _, axs = plt.subplots(rows_num, cols_num, squeeze=False, figsize=(10 * 1.5, 14 * 1.5))
@@ -329,6 +379,9 @@ class WassersteinCalculator(ModelExplorer):
 
             selected_values_list = np.array(df.loc[(df['layer_name'] == target_layer_names[target_layer_idx]) &
                                                    (df['neuron_idx'] == target_neuron)].drop(['layer_name', 'neuron_idx'], axis=1))
+
+            if len(selected_values_list) == 0:
+                continue
 
             bin_size = 0.02
             selected_values_max = selected_values_list.max()
@@ -368,12 +421,11 @@ class WassersteinCalculator(ModelExplorer):
                             else:
                                 title = imagenette_dict[idx]
                         elif dataset_type == 'imagenet_val':
-                            dict_from_full_imagenet_idx = dict(zip([0, 217, 482, 491, 497, 566, 569, 571, 574, 701], range(10)))
-                            title = imagenette_dict[dict_from_full_imagenet_idx[idx]]
+                            title = imagenet_dict[idx]
                         else:
                             raise NotImplementedError()
 
-                        title = 'Class: ' + title
+                        title = 'Class: ' + title.capitalize()
 
                 if idx not in selected_paths1_cache:
                     corresponding_indices = cond_neuron_lambda(idx)
@@ -385,7 +437,7 @@ class WassersteinCalculator(ModelExplorer):
                         final_mask += np.array(cond_mask1)
                     selected_paths1_cache[idx] = np.array(final_mask, dtype=bool)
                 cond_mask1 = selected_paths1_cache[idx]
-                selected_values_list1 = selected_values_list[cond_mask1]
+                selected_values_list1 = selected_values_list[cond_mask1] # why is this the not predicted class? smaller than small offset selects those samples which don't have this class (value 0 in one-hot)
                 if len(selected_values_list1) == 0:
                     print('continue1', idx)
                     continue
@@ -395,7 +447,7 @@ class WassersteinCalculator(ModelExplorer):
                 if if_plot:
                     proper_hist(selected_values_list1, bin_size=bin_size, ax=axs[cond_i], xlim_left=xlim_left,
                             xlim_right=xlim_right,
-                            density=True, label='class not predicted')
+                            density=True, label='Out-of-class')
 
                 if idx not in selected_paths2_cache:
                     corresponding_indices = cond_neuron_lambda(idx)
@@ -408,7 +460,7 @@ class WassersteinCalculator(ModelExplorer):
                         final_mask += np.array(cond_mask2)
                     selected_paths2_cache[idx] = np.array(final_mask, dtype=bool)
                 cond_mask2 = selected_paths2_cache[idx]
-                selected_values_list2 = selected_values_list[cond_mask2]
+                selected_values_list2 = selected_values_list[cond_mask2] # why is this the not predicted class? larger than close to 1 offset selects those samples which have this class (value 1 in one-hot)
                 if len(selected_values_list2) == 0:
                     print('continue2', idx)
                     continue
@@ -417,39 +469,63 @@ class WassersteinCalculator(ModelExplorer):
                     # wd = scipy.stats.wasserstein_distance(selected_values_list1, selected_values_list2)
                     # title += '\n'
                     # title += f'{wd:.2f}'
-                    wd_normed = scipy.stats.wasserstein_distance(
-                        (selected_values_list1 - selected_values_min) / (selected_values_max - selected_values_min),
-                        (selected_values_list2 - selected_values_min) / (selected_values_max - selected_values_min))
-                    wd_normed *= np.sign(selected_values_list2.mean() - selected_values_list1.mean())
-                    if if_plot:
-                        title += f'\nMWD: {wd_normed:.2f}'
-                    wasserstein_dists_dict[target_neuron][idx] = wd_normed
+                    if not use_wasserstein_divergence:
+                        wd_normed = scipy.stats.wasserstein_distance(
+                            (selected_values_list1 - selected_values_min) / (selected_values_max - selected_values_min),
+                            (selected_values_list2 - selected_values_min) / (selected_values_max - selected_values_min))
+
+                        # this means: 2 to the right of 1 -> positive, 2 to the left of 1 -> negative
+                        wd_normed *= np.sign(selected_values_list2.mean() - selected_values_list1.mean())
+                        if if_plot:
+                            title += f'\nMWD: {wd_normed:.2f}'
+                        wasserstein_dists_dict[target_neuron][idx] = wd_normed
+                    else:
+                        # wd_normed = wasserstein_divergence(
+                            # (selected_values_list1 - selected_values_min) / (selected_values_max - selected_values_min),
+                            # (selected_values_list2 - selected_values_min) / (selected_values_max - selected_values_min))
+                        
+                        wd = wasserstein_divergence(
+                            selected_values_list1,
+                            selected_values_list2)
+
+                        # the sign should match automatically
+                        if if_plot:
+                            title += f'\nShift: {wd:.2f}'
+                        wasserstein_dists_dict[target_neuron][idx] = wd
 
 
                 if if_plot:
                     proper_hist(selected_values_list2, bin_size=bin_size, ax=axs[cond_i], xlim_left=xlim_left,
                             xlim_right=xlim_right,
-                            alpha=0.75, title=title, density=True, label='class predicted')
-                    axs[cond_i].set_xlabel('Mean activation')
-                    axs[cond_i].set_ylabel('Density')
+                            alpha=0.75, title=title, density=True, label='In-class')
+                    
+                    fontsize=16
+                    axs[cond_i].set_xlabel('Mean activation', fontsize=fontsize)
+                    axs[cond_i].set_ylabel('Density', fontsize=fontsize)
                     # axs[cond_i].set_frame_on(False)
                     axs[cond_i].get_yaxis().set_ticks([])
                     # axs[cond_i].get_yaxis().set_visible(False)
-                    axs[cond_i].legend()
+                    axs[cond_i].tick_params(labelsize=14)
+                    handles, labels = axs[cond_i].get_legend_handles_labels()
+                    axs[cond_i].legend(handles[::-1], labels[::-1], fontsize=fontsize-2)
 
 
 
             if if_plot:
                 plot_name = f'{target_layer_idx}_{target_neuron}'
-                plt.suptitle(plot_name)
+                title_name = f'{target_layer_idx}/{target_layer_names[target_layer_idx]}_{target_neuron}'
+                plt.suptitle(title_name)
                 plt.tight_layout()
-                plt.savefig(f'{out_dir}/hist_{plot_name}.png', format='png')#, bbox_inches='tight', pad_inches=0)
+                wdiv_str = "_shift" if use_wasserstein_divergence else ""
+                plt.savefig(f'{out_dir}/hist_{plot_name}{wdiv_str}.png', format='png')#, bbox_inches='tight', pad_inches=0)
+                plt.savefig(f'{out_dir}/hist_{plot_name}{wdiv_str}.svg', format='svg')#, bbox_inches='tight', pad_inches=0)
                 if if_show:
                     plt.show()
                 plt.close()
 
         if if_calc_wasserstein:
-            np.save('wasser_dists/wasser_dist_' + out_dir + '_' + str(target_layer_idx) + '.npy', wasserstein_dists_dict, allow_pickle=True)
+            wname = "shift" if use_wasserstein_divergence else "dist"
+            np.save(f'wasser_dists/wasser_{wname}_' + out_dir + '_' + str(target_layer_idx) + '.npy', wasserstein_dists_dict, allow_pickle=True)
 
     def wasserstein_barplot(self, suffix, target_neurons_dict, classes_dict, n_show=10, if_show=False, out_path_suffix=''):
         n_best = n_show // 2
@@ -491,7 +567,7 @@ class WassersteinCalculator(ModelExplorer):
                                                     sorted_dict_path=None,
                                                     used_neurons=None, dataset_type='celeba', if_calc_wasserstein=False,
                                                     offset=(0, 0), if_show=True, if_force_recalculate=False, if_dont_save=False,
-                                                    if_left_lim_zero=True, layer_list=layers_bn, if_plot=True, if_rename_layers=True):
+                                                    if_left_lim_zero=True, layer_list=layers_bn, if_plot=True, if_rename_layers=True, use_wasserstein_divergence=False):
         '''
 
         :param target_dict: 'all_network' OR {target_layer_idx -> [neuron_indices] OR 'all'}
@@ -546,9 +622,19 @@ class WassersteinCalculator(ModelExplorer):
 
         if dataset_type == 'celeba':
             cond_neurons = list(range(40))
-        else:
-            # cond_neurons = list(range(20))
+        elif 'imagenet' in dataset_type:
+            cond_neurons = list(range(1000))
+        elif 'cifar' in dataset_type:
             cond_neurons = list(range(10))
+        else:
+            cond_neurons = None
+            for l in reversed(list(self.model.named_modules())):
+                if l[0] == 'fc':
+                    cond_neurons = l[1].out_features
+                    break
+            assert cond_neurons != None, "Can't infer number of output neurons = classes."
+            # cond_neurons = list(range(20))
+            # cond_neurons = list(range(10))
             # cond_neurons = [0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
             # cond_neurons = list(range(1000))#[0, 217, 482, 491, 497, 566, 569, 571, 574, 701] + list(range(1, 10)) + list(range(901, 911))
             # cond_neurons = list(range(301))
@@ -583,7 +669,8 @@ class WassersteinCalculator(ModelExplorer):
                                                    offset, if_show, if_left_lim_zero, layer_list, if_plot,
                                                    lambda x: [x],
                                                    #cond_neuron_lambda=lambda x: hypernym_idx_to_imagenet_idx[x],
-                                                   if_rename_layers
+                                                   if_rename_layers,
+                                                   use_wasserstein_divergence
                                                   )
 
     def convert_sorted_dict_per_layer_per_neuron_to_dataframe(self, sorted_dict_per_layer_per_neuron, out_path=None):
@@ -719,6 +806,9 @@ if __name__ == '__main__':
     plt.rcParams.update({'font.size': 18})
     # params['batch_size'] = 50/2#50/4#1000/4#26707#11246#1251#10001#
     # params['dataset'] = 'broden_val'
+
+    params['dataset'] = 'cifar10'
+
     _, val_loader, tst_loader = datasets.get_dataset(params, configs)
     loader = val_loader#tst_loader#
 
@@ -880,8 +970,9 @@ if __name__ == '__main__':
                                                    dataset_type='cifar',
                                                    sorted_dict_path=f'sorted_dict_{moniker}.npy',
                                                    if_calc_wasserstein=True, offset='argmax', if_show=True,
-                                                   if_force_recalculate=True, if_left_lim_zero=True,
-                                                   layer_list=layers_bn_afterrelu, if_plot=True, if_rename_layers=True)
+                                                   if_force_recalculate=False, if_left_lim_zero=True,
+                                                   layer_list=layers_bn_afterrelu, if_plot=True, if_rename_layers=True,
+                                                   use_wasserstein_divergence=True)
 
     # chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
     # ac.wasserstein_barplot('attr_hist_pretrained_imagenet_prerelu', dict(zip(range(15), [range(c) for c in chunks])),
@@ -916,7 +1007,7 @@ if __name__ == '__main__':
     # ac.store_highest_activating_patches(loader, [10], out_path='patches_imagenet',
     #                                     base_path='/mnt/raid/data/chebykin/imagenet_val/my_imgs',
     #                                     image_size=224)
-    exit()
+    # exit()
 
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'nonsparse_afterrelu_nobiascifar.pkl', {14:'all'},
     #                                                'attr_hist_nobiascifar', if_cond_label=False,
@@ -950,12 +1041,26 @@ if __name__ == '__main__':
     #                                                if_nonceleba=True,
     #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_add1_2cifar.npy',
     #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False)
+    
+    path_prefix_mnt = Path("/mnt/raid/data/chebykin/pycharm_project_AA/")
+    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single_nonsparse_afterrelu.pkl', 'all_network',
+    #                                                'attr_hist_bettercifar10single', if_cond_label=False,
+    #                                                used_neurons='resnet_full',
+    #                                                sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single.npy',
+    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5),
+    #                                                dataset_type='cifar', if_show=False, use_wasserstein_divergence=True)
+
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'pretrained_imagenet_afterrelu.pkl', 'all_network', 'attr_hist_pretrained_imagenet_afterrelu', if_cond_label=False, used_neurons='resnet_full', dataset_type='imagenet_val', sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_pretrained_imagenet_afterrelu.npy', if_plot=False,if_calc_wasserstein=True, offset='argmax', if_show=False, use_wasserstein_divergence=True)
+    
+    exit()
+
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single2_nonsparse_afterrelu.pkl', 'all_network',
     #                                                'attr_hist_bettercifar10single2', if_cond_label=False,
     #                                                used_neurons='resnet_full',
     #                                                if_nonceleba=True,
     #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single2.npy',
     #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False)
+
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single3_nonsparse_afterrelu.pkl',
     #                                                'all_network',
     #                                                'attr_hist_bettercifar10single3', if_cond_label=False,

@@ -23,6 +23,9 @@ import torch
 from PIL import Image, ImageFont
 from PIL import ImageDraw
 from matplotlib import pyplot as plt
+plt.style.use('seaborn-paper')
+import seaborn as sns
+sns.set_context("paper")
 from sortedcontainers import SortedDict
 from torch.nn.functional import softmax
 from torch.utils import data
@@ -158,7 +161,7 @@ class GradWassersteinCorrelator(ModelExplorer):
             for layer_name in target_layer_names:
                 n_neurons = neuron_nums[target_layer_names.index(layer_name)]
                 for target_neuron in range(n_neurons):
-                    grad_meaned = np.mean(cur_grads[layer_name][target_neuron])
+                    grad_meaned = np.nanmean(cur_grads[layer_name][target_neuron])
                     mean_grads_for_pd[cond_idx].append(grad_meaned)
 
         for hook in hooks:
@@ -178,7 +181,7 @@ class GradWassersteinCorrelator(ModelExplorer):
                                                    layers=layers_bn_afterrelu, neuron_nums=[64, 64, 64, 128, 128, 128,
                                                                         128, 256, 256, 256, 256, 512, 512, 512, 512],
                                                    if_rename_layers=True, layer_ind_additive=0,
-                                                   if_only_for_negative_mwds=False):
+                                                   if_only_for_negative_mwds=False, bootstrap_repeats=1, bootstrap_subset=1.0, use_wasserstein_divergence=False):
         # target_layer_names = [layer.replace('_', '.') for layer in layers]
         target_layer_names = np.array([layer.replace('_', '.') if if_rename_layers else layer for layer in layers])
 
@@ -186,46 +189,69 @@ class GradWassersteinCorrelator(ModelExplorer):
         data_corrs = []
         if if_replace_wass_dists_with_noise:
             wasser_dists_np = np.random.laplace(0, 0.05, (10, 512))
-        for i, layer_name in enumerate(target_layer_names):
-            i += layer_ind_additive
-            print(layer_name)
-            if target_indices is not None:
-                if i not in target_indices:
-                    continue
-            if not if_replace_wass_dists_with_noise:
-                wasser_dists = np.load(f'{wass_dists_path_prefix}_{i}.npy', allow_pickle=True).item()
-                wasser_dists_np = np.array(pd.DataFrame(wasser_dists))
-                # wasser_dists_np[wasser_dists_np > 0] = 0
-            # else:
-            #     if True:
-            #         wasser_dists_np = np.random.laplace(0, 0.05, (10, neuron_nums[i]))
-            #     else:
-            #         wasser_dists = np.load(f'{wass_dists_path_prefix}_{i}.npy', allow_pickle=True).item()
-            #         wasser_dists_np = np.array(pd.DataFrame(wasser_dists))
-            #         def shuffle_along_axis(a, axis):
-            #             idx = np.random.rand(*a.shape).argsort(axis=axis)
-            #             return np.take_along_axis(a, idx, axis=axis)
-            #         wasser_dists_np = shuffle_along_axis(wasser_dists_np, axis=1)
-            for neuron in range(neuron_nums[i]):
-                print(neuron)
-                if neuron >= wasser_dists_np.shape[1]:
-                    print('Something strange is afoot', neuron, wasser_dists_np.shape[1])
-                    data_corrs.append([layer_name, neuron, 0])
-                    break
-                # if (np.abs(wasser_dists_np[:, neuron]) >= 0.09).sum() < 3:
-                #     continue
-                cur_grads = np.array(df_grads.loc[(df_grads['layer_name'] == layer_name)
-                             & (df_grads['neuron_idx'] == neuron)].drop(['layer_name', 'neuron_idx'], axis=1))
-                mwds_neuron = wasser_dists_np[:, neuron]
-                cur_grads = cur_grads.squeeze()
-                if if_only_for_negative_mwds:
-                    idx = mwds_neuron < 0
-                    mwds_neuron = mwds_neuron[idx]
-                    cur_grads = cur_grads[idx]
-                cur_corr = np.corrcoef(mwds_neuron, cur_grads)[0, 1]
-                # cur_corr = scipy.stats.spearmanr(wasser_dists_np[:, neuron], cur_grads.squeeze())[0]
-                data_corrs.append([layer_name, neuron, cur_corr])
-        df_corr = pd.DataFrame(data_corrs, columns=['layer_name', 'neuron_idx', 'corr'])
+        for _ in range(bootstrap_repeats):
+            for i, layer_name in enumerate(target_layer_names):
+                i += layer_ind_additive
+                print(layer_name)
+                if target_indices is not None:
+                    if i not in target_indices:
+                        continue
+                if not if_replace_wass_dists_with_noise:
+                    wasser_dists = np.load(f'{wass_dists_path_prefix}_{i}.npy', allow_pickle=True).item()
+                    wasser_dists_np = np.array(pd.DataFrame(wasser_dists))
+                    # wasser_dists_np[wasser_dists_np > 0] = 0
+                # else:
+                #     if True:
+                #         wasser_dists_np = np.random.laplace(0, 0.05, (10, neuron_nums[i]))
+                #     else:
+                #         wasser_dists = np.load(f'{wass_dists_path_prefix}_{i}.npy', allow_pickle=True).item()
+                #         wasser_dists_np = np.array(pd.DataFrame(wasser_dists))
+                #         def shuffle_along_axis(a, axis):
+                #             idx = np.random.rand(*a.shape).argsort(axis=axis)
+                #             return np.take_along_axis(a, idx, axis=axis)
+                #         wasser_dists_np = shuffle_along_axis(wasser_dists_np, axis=1)
+                
+                #Try bootstrapping classes, neurons make no sense because they are not averaged
+                
+                for neuron in range(neuron_nums[i]):
+                    print(neuron)
+                    if neuron >= wasser_dists_np.shape[1]:
+                        print('Something strange is afoot', neuron, wasser_dists_np.shape[1])
+                        data_corrs.append([layer_name, neuron, 0])
+                        break
+                    # if (np.abs(wasser_dists_np[:, neuron]) >= 0.09).sum() < 3:
+                    #     continue
+                    cur_grads = np.array(df_grads.loc[(df_grads['layer_name'] == layer_name)
+                                & (df_grads['neuron_idx'] == neuron)].drop(['layer_name', 'neuron_idx'], axis=1))
+                    
+                    cur_grads = cur_grads.squeeze()
+                    assert cur_grads.shape[0] == wasser_dists_np.shape[0]
+                    nclasses = wasser_dists_np.shape[0]
+                    class_subset = np.random.choice(nclasses, int(nclasses*bootstrap_subset))
+                    mwds_neuron = wasser_dists_np[class_subset, neuron]
+                    cur_grads = cur_grads[class_subset]
+                    
+                    wtype = "Shift" if use_wasserstein_divergence else "MWD"
+                    for subset_type in ["All", f"Negative {wtype}s", f"Positive {wtype}s"]:
+                        if "Negative" in subset_type:
+                            idx = mwds_neuron < 0
+                            if idx.sum() == 0:
+                                continue
+                        elif "Positive" in subset_type:
+                            idx = mwds_neuron > 0
+                            if idx.sum() == 0:
+                                continue
+                        else:
+                            idx = Ellipsis
+                        
+                        mwds_neuron_ = mwds_neuron[idx]
+                        cur_grads_ = cur_grads[idx]
+                    
+                        cur_corr = np.corrcoef(mwds_neuron_, cur_grads_)[0, 1]
+                        # cur_corr = scipy.stats.spearmanr(wasser_dists_np[:, neuron], cur_grads.squeeze())[0]
+                        data_corrs.append([layer_name, neuron, cur_corr, subset_type])
+        
+        df_corr = pd.DataFrame(data_corrs, columns=['layer_name', 'neuron_idx', 'corr', 'Subset'])
         df_corr.to_pickle(out_path)
 
     def correlate_grads_with_wass_dists_per_task(self, df_grads_path, out_path, wass_dists_path_prefix):
@@ -246,51 +272,73 @@ class GradWassersteinCorrelator(ModelExplorer):
 
     def plot_correlation_of_grads_with_wass_dists(self, df_corr_path, layers,
                                                   df_corr_paths_early=None, early_layers=None, if_rename_layers=True,
-                                                  if_show=True):
+                                                  if_show=True, layerind_offset=0):
         df_corr = pd.read_pickle(df_corr_path)
         # target_layer_names = [layer.replace('_', '.') for layer in layers]
         target_layer_names = np.array([layer.replace('_', '.') if if_rename_layers else layer for layer in layers])
-        avg_corrs = []
-        for layer_name in target_layer_names:
-            cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)].drop(
-                ['layer_name', 'neuron_idx'], axis=1))
-            print(cur_corrs.shape)
-            avg_corrs.append(np.nanmean(cur_corrs))
-        if df_corr_paths_early is not None:
-            df_corr = pd.read_pickle(df_corr_paths_early)
-            target_layer_names = [layer.replace('_', '.') for layer in early_layers]
-            avg_corrs_early = []
-            for layer_name in target_layer_names:
-                cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)].drop(
-                    ['layer_name', 'neuron_idx'], axis=1))
-                print(cur_corrs.shape)
-                avg_corrs_early.append(np.nanmean(cur_corrs))
-            avg_corrs = avg_corrs_early + avg_corrs
+        # avg_corrs = []
+        # for layer_name in target_layer_names:
+        #     cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)]["corr"])
+        #     print(cur_corrs.shape)
+        #     avg_corrs.append(np.nanmean(cur_corrs))
+        # if df_corr_paths_early is not None:
+        #     df_corr = pd.read_pickle(df_corr_paths_early)
+        #     target_layer_names = [layer.replace('_', '.') for layer in early_layers]
+        #     avg_corrs_early = []
+        #     for layer_name in target_layer_names:
+        #         cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)]["corr"])
+        #         print(cur_corrs.shape)
+        #         avg_corrs_early.append(np.nanmean(cur_corrs))
+        #     avg_corrs = avg_corrs_early + avg_corrs
+
+        # DataFrame manipulation
+        df_corr["Layer index"] = df_corr["layer_name"].apply(lambda ln: np.where(target_layer_names == ln)[0][0]) + layerind_offset
+        df_corr["Correlation"] = df_corr["corr"]
+
+        # boxplot instead of averaging
+        fig, ax = plt.subplots()
+        ax = sns.boxplot(x="Layer index", y="Correlation", hue="Subset", data=df_corr)
+
+        name = f"plot_{Path(df_corr_path).stem}"
+        fig.savefig(f"{name}.png", format='png', bbox_inches='tight')
+        fig.savefig(f"{name}.svg", format='svg', bbox_inches='tight')
+        fig.show()
+        
+
+        return
 
         x = np.arange(len(avg_corrs))
         # plt.figure(figsize=(8*1.2, 6*1.2))
-        plt.plot(x, avg_corrs, '-o', label=df_corr_path.replace('.pkl', ''))
+        l = "All"
+        if "negonly" in df_corr_path:
+            l = "Negative MWDs"
+        if "posonly" in df_corr_path:
+            l = "Positive MWDs"
+        fig = plt.plot(x, avg_corrs, '-o', label=l)
         # plt.xticks(x)
         print(avg_corrs)
         plt.ylim(0, 1)
         plt.xlabel('Layer index')
-        plt.ylabel('Avg. correlation')
+        plt.ylabel('Avg. correlation (over neurons)')
         if if_show:
             plt.legend()
+            name = f"plot_{Path(df_corr_path).stem}"
+            plt.savefig(f"{name}.png", format='png', bbox_inches='tight')
+            plt.savefig(f"{name}.svg", format='svg', bbox_inches='tight')
             plt.show()
 
     def plot_correlation_of_grads_with_wass_dists_many_runs(self, df_corr_paths, layers,
-                                                            df_corr_paths_early=None, early_layers=None):
+                                                            df_corr_paths_early=None, early_layers=None, layerind_offset=0):
         df_corrs = [pd.read_pickle(df_corr_path) for df_corr_path in df_corr_paths]
         target_layer_names = [layer.replace('_', '.') for layer in layers]
         avg_corrs_per_run = np.zeros((len(df_corrs), len(target_layer_names)))
         for i, df_corr in enumerate(df_corrs):
             for j, layer_name in enumerate(target_layer_names):
                 cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)].drop(
-                    ['layer_name', 'neuron_idx'], axis=1))
-                avg_corrs_per_run[i, j] = np.mean(cur_corrs)
-        means = np.mean(avg_corrs_per_run, axis=0)
-        stds = np.std(avg_corrs_per_run, axis=0)
+                    ['layer_name', 'neuron_idx', 'Subset'], axis=1))
+                avg_corrs_per_run[i, j] = np.nanmean(cur_corrs)
+        means = np.nanmean(avg_corrs_per_run, axis=0)
+        stds = np.nanstd(avg_corrs_per_run, axis=0)
 
         if df_corr_paths_early is not None:
             df_corrs = [pd.read_pickle(df_corr_path) for df_corr_path in df_corr_paths_early]
@@ -299,14 +347,14 @@ class GradWassersteinCorrelator(ModelExplorer):
             for i, df_corr in enumerate(df_corrs):
                 for j, layer_name in enumerate(target_layer_names):
                     cur_corrs = np.array(df_corr.loc[(df_corr['layer_name'] == layer_name)].drop(
-                        ['layer_name', 'neuron_idx'], axis=1))
+                        ['layer_name', 'neuron_idx', 'Subset'], axis=1))
                     avg_corrs_per_run[i, j] = np.nanmean(cur_corrs)
-            means_early = np.mean(avg_corrs_per_run, axis=0)
-            stds_early = np.std(avg_corrs_per_run, axis=0)
+            means_early = np.nanmean(avg_corrs_per_run, axis=0)
+            stds_early = np.nanstd(avg_corrs_per_run, axis=0)
             means = np.append(means_early, means)
             stds = np.append(stds_early, stds)
 
-        x = np.arange(len(means))
+        x = np.arange(len(means)) + layerind_offset
         # plt.figure(figsize=(8*1.2, 6*1.2))
         plt.plot(x, means, '-o')
         plt.fill_between(x, means-stds, means+stds, facecolor='orange')
@@ -315,7 +363,50 @@ class GradWassersteinCorrelator(ModelExplorer):
         # plt.xticks(x)
         plt.xlabel('Layer index')
         plt.ylabel('Avg. correlation')
+        name = "plot_corr_grads_cifar10_multiple_runs"
+        plt.savefig(f"{name}.png", format='png', bbox_inches='tight')
+        plt.savefig(f"{name}.svg", format='svg', bbox_inches='tight')
         plt.show()
+
+    def new_plot_correlation_of_grads_with_wass_dists_many_runs(self, df_corr_paths, layers,
+                                                            df_corr_paths_early=None, early_layers=None, layerind_offset=0, name=None, use_wasserstein_divergence=False):
+        df_corrs = [pd.read_pickle(df_corr_path) for df_corr_path in df_corr_paths]
+        target_layer_names = [layer.replace('_', '.') for layer in layers]
+
+        df_corrs_early = []
+        target_layer_names_early = []
+        if df_corr_paths_early is not None:
+            df_corrs_early = [pd.read_pickle(df_corr_path) for df_corr_path in df_corr_paths_early]
+            target_layer_names_early = [layer.replace('_', '.') for layer in early_layers]
+
+        df_corrs_joined = pd.concat(df_corrs + df_corrs_early)
+        target_layer_names = np.array(target_layer_names + target_layer_names_early)
+
+        # DataFrame manipulation
+        df_corrs_joined["Layer index"] = df_corrs_joined["layer_name"].apply(lambda ln: np.where(target_layer_names == ln)[0][0]) + layerind_offset
+        df_corrs_joined["Correlation"] = df_corrs_joined["corr"]
+
+        def fix_subset_name(sn):
+            snl = sn.split()
+            if len(snl) == 2:
+                snl[1] = "Shift" if use_wasserstein_divergence else "MWDs"
+            return str.join(" ", snl)
+
+        df_corrs_joined["Subset"] = df_corrs_joined["Subset"].apply(fix_subset_name)
+
+        # boxplot instead of averaging
+        fig, ax = plt.subplots()
+        ax = sns.boxplot(x="Layer index", y="Correlation", hue="Subset", data=df_corrs_joined, dodge=True,linewidth=1)
+        # ax = sns.violinplot(x="Layer index", y="Correlation", hue="Subset", data=df_corrs_joined, dodge=True, bw=.2, cut=1, linewidth=1)
+
+        if name == None:
+            name = f"plot_{Path(df_corr_paths[0]).stem}_and_more"
+        else:
+            name = f"plot_{name}"
+        
+        fig.savefig(f"{name}.png", format='png', bbox_inches='tight')
+        fig.savefig(f"{name}.svg", format='svg', bbox_inches='tight')
+        fig.show()
 
     def plot_grads_and_wass_dists(self, df_grads_path, out_path, wass_dists_path_prefix,
                                                    if_replace_wass_dists_with_noise=False, target_indices=None,
@@ -502,10 +593,9 @@ if __name__ == '__main__':
         params['dataset'] = 'imagenet_test'
         params['batch_size'] = 12#256#320
     print(model_name_short)
-    plt.rcParams.update({'font.size': 17})
     # params['batch_size'] = 50/2#50/4#1000/4#26707#11246#1251#10001#
     # params['dataset'] = 'broden_val'
-    if False:
+    if True:
         _, val_loader, tst_loader = datasets.get_dataset(params, configs)
         loader = tst_loader#val_loader#
 
@@ -522,7 +612,7 @@ if __name__ == '__main__':
     # gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'grads_test_{moniker}.pkl',
     #                                                      if_pretrained_imagenet, ls,
     #                                                       ch, if_rename_layers=False)
-    # # # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_pretrained_imagenet_afterrelu_test.pkl', if_pretrained_imagenet)
+    # gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_pretrained_imagenet_afterrelu_test.pkl', if_pretrained_imagenet)
     # # # ac.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_pretrained_imagenet_afterrelu_test_early.pkl',
     # # #                                                      if_pretrained_imagenet, layers=early_layers_bn_afterrelu)
     # if True:
@@ -531,10 +621,50 @@ if __name__ == '__main__':
     #                                                    f'wasser_dists/wasser_dist_attr_hist_{moniker}',
     #                                                   if_replace_wass_dists_with_noise=False, layers=ls,
     #                                                    neuron_nums=chunks, if_rename_layers=False)
-    #     # ac.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test.pkl',
-    #     #                                               f'corr_grads_imagenet_test.pkl',
-    #     #                                               'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test',
-    #     #                                               if_replace_wass_dists_with_noise=False)
+    
+    
+    # DONE Recompute wasserstein distances
+
+    use_wasserstein_divergence=True
+    wname = "shift" if use_wasserstein_divergence else "dist"
+    wsuffix = "_shift" if use_wasserstein_divergence else ""
+            
+    from calculate_wasser_dists import WassersteinCalculator
+    # wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
+
+    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader,'pretrained_imagenet_afterrelu_test.pkl',
+    #                                                'all_network',
+    #                                                'attr_hist_pretrained_imagenet_afterrelu_test', if_cond_label=False,
+    #                                                used_neurons='use_target',
+    #                                                dataset_type='imagenet_test',
+    #                                                sorted_dict_path=f'sorted_dict_{model_name_short}.npy',
+    #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
+    #                                                if_force_recalculate=True, if_dont_save=False, if_left_lim_zero=True,
+    #                                                layer_list=layers_bn_afterrelu, if_plot=False, use_wasserstein_divergence=use_wasserstein_divergence)
+
+    # gwc.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test.pkl',
+    #                                                f'corr_grads_imagenet_test{wsuffix}.pkl',
+    #                                                f'wasser_dists/wasser_{wname}_attr_hist_pretrained_imagenet_afterrelu_test',
+    #                                                if_replace_wass_dists_with_noise=False, use_wasserstein_divergence=use_wasserstein_divergence)
+
+    gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test{wsuffix}.pkl', layers_bn_afterrelu, if_rename_layers=True, layerind_offset=2)                                                   
+
+    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, f'{model_name_short}.pkl', 'all_network',
+    #                                             f'attr_hist_{model_name_short}_afterrelu_test', if_cond_label=False,
+    #                                             used_neurons='use_target',
+    #                                             dataset_type='imagenet_test',
+    #                                             sorted_dict_path=f'sorted_dict_{model_name_short}.npy',
+    #                                             if_calc_wasserstein=True, offset='argmax', if_show=True,
+    #                                             if_force_recalculate=True, if_left_lim_zero=True,
+    #                                             layer_list=layers_bn_afterrelu, if_plot=False, if_rename_layers=True, use_wasserstein_divergence=use_wasserstein_divergence)
+    
+    # gwc.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test.pkl',
+    #                                                 f'corr_grads_imagenet_test{wsuffix}.pkl',
+    #                                                 f'wasser_dists/wasser_{wname}_attr_hist_pretrained_imagenet_afterrelu_test',
+    #                                                 if_replace_wass_dists_with_noise=False, use_wasserstein_divergence=use_wasserstein_divergence)
+    
+    
+    
     #     # ac.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test_early.pkl',
     #     #                                               f'corr_grads_imagenet_test_early.pkl',
     #     #                       'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test_early_and_last',
@@ -544,7 +674,13 @@ if __name__ == '__main__':
     #                                                   'wasser_dist_attr_hist_bettercifar10single')
     # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_test_{moniker}.pkl', ls, if_rename_layers=False)
 
-    # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test.pkl', layers_bn_afterrelu, if_rename_layers=True)
+
+    # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test{wsuffix}_early_and_last.pkl', layers_bn_afterrelu, if_rename_layers=True, layerind_offset=2)
+
+    # exit()
+
+
+
     # gwc.correlate_grads_with_wass_dists_per_neuron('grads_pretrained_imagenet_afterrelu_test.pkl',
     #                                           f'corr_grads_imagenet_test_negonly.pkl',
     #                                           'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test',
@@ -552,13 +688,13 @@ if __name__ == '__main__':
     # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test.pkl', layers_bn_afterrelu, if_rename_layers=True, if_show=False)
     # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test_negonly.pkl', layers_bn_afterrelu, if_rename_layers=True)
 
-    gwc.plot_grads_and_wass_dists('grads_pretrained_imagenet_afterrelu_test.pkl',
-                                                   f'corr_grads_imagenet_test_negonly.pkl',
-                                                   'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test',
-                                                   if_replace_wass_dists_with_noise=False,
-                                                   if_only_for_negative_mwds=False,
-                                  layers=[layers_bn_afterrelu[9]], layer_ind_additive=9)
-    exit()
+    # gwc.plot_grads_and_wass_dists('grads_pretrained_imagenet_afterrelu_test.pkl',
+    #                                                f'corr_grads_imagenet_test_negonly.pkl',
+    #                                                'wasser_dists/wasser_dist_attr_hist_pretrained_imagenet_afterrelu_test',
+    #                                                if_replace_wass_dists_with_noise=False,
+    #                                                if_only_for_negative_mwds=False,
+    #                               layers=[layers_bn_afterrelu[9]], layer_ind_additive=9)
+    
     # gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_imagenet_test.pkl',
     #                                              layers_bn_afterrelu,
     #                                              'corr_grads_imagenet_test_early.pkl',
@@ -574,19 +710,78 @@ if __name__ == '__main__':
     #         r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
     #     ]
     # ])
-    model_paths = [
-            r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-            r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-            r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-            r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
-            r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+
+    #DONE: recompute the correlations
+
+    model_params_paths = [
+            (r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl', 
+            r'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'),
+            
+            (r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl', 
+            r'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'),
+            
+            (r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl', 
+            r'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'),
+            
+            (r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+            r'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'),
+            
+            (r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl',
+            r'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'),
         ]
-    gwc.plot_correlation_of_grads_with_wass_dists_many_runs(
-        [f'corr_grads_test_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in model_paths],
-        layers_bn_afterrelu,
-        [f'corr_grads_test_early_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}.pkl' for save_model_path in model_paths],
-        early_layers_bn_afterrelu
-    )
+    
+    if True:
+        for save_model_path, param_file in model_params_paths:
+            model_to_use = 'my'
+            gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
+            params, configs = gwc.params, gwc.configs
+
+            model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
+            
+            print(model_name_short)
+            
+            _, val_loader, tst_loader = datasets.get_dataset(params, configs)
+            loader = tst_loader
+
+            chunks = [64, 64] + [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
+            # gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'grads_test_{model_name_short}.pkl',
+            #                                                     False, all_layers_bn_afterrelu,
+            #                                                     chunks)
+            
+            use_wasserstein_divergence=True
+            wname = "shift" if use_wasserstein_divergence else "dist"
+            wsuffix = "_shift" if use_wasserstein_divergence else ""
+
+            # Recompute wasserstein distances
+            
+            from calculate_wasser_dists import WassersteinCalculator
+            wc = WassersteinCalculator(save_model_path, param_file, model_to_use)   
+
+            # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, f'{model_name_short}.pkl', 'all_network',
+            #                                            f'attr_hist_{model_name_short}', if_cond_label=False,
+            #                                            used_neurons='use_target',
+            #                                            dataset_type='cifar',
+            #                                            sorted_dict_path=f'sorted_dict_{model_name_short}.npy',
+            #                                            if_calc_wasserstein=True, offset='argmax', if_show=True,
+            #                                            if_force_recalculate=True, if_left_lim_zero=True,
+            #                                            layer_list=layers_bn_afterrelu, if_plot=False, if_rename_layers=True, use_wasserstein_divergence=use_wasserstein_divergence)
+
+            # DONE Recompute correlations
+
+            # gwc.correlate_grads_with_wass_dists_per_neuron(f'grads_test_{model_name_short}.pkl',
+            #                                         f'corr_grads_test_{model_name_short}{wsuffix}.pkl',
+            #                                         f'wasser_dists/wasser_{wname}_attr_hist_{model_name_short}',
+            #                                         if_replace_wass_dists_with_noise=False, use_wasserstein_divergence=use_wasserstein_divergence)
+
+            gwc.plot_correlation_of_grads_with_wass_dists(f'corr_grads_test_{model_name_short}{wsuffix}.pkl', layers_bn_afterrelu, if_rename_layers=True, layerind_offset=2)
+
+    use_wasserstein_divergence=True
+    wname = "shift" if use_wasserstein_divergence else "dist"
+    wsuffix = "_shift" if use_wasserstein_divergence else ""
+
+    gwc.new_plot_correlation_of_grads_with_wass_dists_many_runs(
+        [f'corr_grads_test_{save_model_path[37:53] + "..." + save_model_path[-12:-10]}{wsuffix}.pkl' for save_model_path, _ in model_params_paths],
+        layers_bn_afterrelu, layerind_offset=2, name=f"corr_grads_test_cifar10_multiple_runs_n_{len(model_params_paths)}{wsuffix}", use_wasserstein_divergence=use_wasserstein_divergence)
     # gwc.plot_correlation_of_grads_with_wass_dists_many_runs(
     #     [f'corr_grads_test_cifar_noskip_whole{i}.pkl' for i in range(1, 5 + 1)],
     #     all_layers_bn_afterrelu
