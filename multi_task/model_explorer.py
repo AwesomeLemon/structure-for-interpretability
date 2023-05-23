@@ -60,6 +60,32 @@ from sklearn.model_selection import cross_validate
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+class ExplorativeBasicBlock(torchvision.models.resnet.BasicBlock):
+    def __init__(self, inplanes: int, planes: int, stride: int = 1, downsample = None, groups: int = 1, base_width: int = 64, dilation: int = 1, norm_layer = None) -> None:
+        super().__init__(inplanes, planes, stride, downsample, groups, base_width, dilation, norm_layer)
+        delattr(self, 'relu')
+        self.relu1 = torch.nn.ReLU(inplace=False)
+        self.relu2 = torch.nn.ReLU(inplace=False)
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu1(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu2(out)
+
+        return out  
+
+
 class ModelExplorer:
     def __init__(self, save_model_path, param_file, model_to_use='my'):
         if model_to_use == 'my':
@@ -144,7 +170,8 @@ class ModelExplorer:
         else:
             im_size = (224, 224)
             if model_to_use == 'resnet18':
-                trained_model = torchvision.models.__dict__['resnet18'](pretrained=True).to(device)
+                # trained_model = torchvision.models.__dict__['resnet18'](pretrained=True).to(device)
+                trained_model = torchvision.models.resnet._resnet('resnet18', ExplorativeBasicBlock, [2, 2, 2, 2], pretrained=True, progress=True).to(device)
                 # trained_model = torchvision.models.__dict__['resnet34'](pretrained=True).to(device)
                 # trained_model = models.__dict__['vgg19_bn'](pretrained=True).to(device)
             if model_to_use == 'mobilenet':
@@ -167,6 +194,7 @@ class ModelExplorer:
                 model[m].eval()
 
             self.feature_extractor = self.model['rep']
+            self.prediction_head = self.model['all'].linear
         else:
             self.model.eval()
             self.model.zero_grad()
