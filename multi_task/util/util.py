@@ -63,6 +63,8 @@ layers_bn = ['layer1_0',
              ]
 
 # relu2 extracts the activations (ingoing? CHECK!) of the second relu -> requires changing basicblock or monkey patching
+# only when 'relu2' is in the name it saves the inputs to that layer
+# otherwise it's using the output... this is why prerelu and afterelu are correct
 layers_bn_prerelu = ['layer1_0_relu2',
              'layer1_1_bn1', 'layer1_1_relu2',
              'layer2_0_bn1', 'layer2_0_relu2',
