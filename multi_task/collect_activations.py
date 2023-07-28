@@ -59,6 +59,8 @@ import torch.nn.functional as F
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import cross_validate
 
+from correlate_wasser_dists_gradients import GradWassersteinCorrelator
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -1685,6 +1687,7 @@ if __name__ == '__main__':
     if_pretrained_imagenet = model_to_use != 'my'
     # ac, params, configs = ActivityCollector.create_activity_collector(save_model_path, param_file, if_pretrained_imagenet)
     ac = ActivityCollector(save_model_path, param_file, model_to_use)
+    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
     params, configs = ac.params, ac.configs
 
     model_name_short = save_model_path[37:53] + '...' + save_model_path[-12:-10]
@@ -1765,18 +1768,27 @@ if __name__ == '__main__':
     # ac.assess_binary_separability_1vsAll_whole_network(path_prefix_mnt/'bettercifar10single_nonsparse_afterrelu.pkl', path_prefix_mnt/'df_label_cifar.pkl',
     #                                                    layers_bn, 10, postfix='_cifar')
 
+
     #TODO: adapt this to the regression discontinuity experiment
     # prerelu activations are not available for bettercifar10
     # i need layers_before_relu
 
     #DONE: check how relu2 handles the bias: there is no bias
 
-    layerinds = list(filter(lambda x: x % 2 == 0, range(15))) # those are just the relu2 layers
-    ac.store_layer_activations_many(loader, layerinds, out_path_postfix='_bettercifar10single_prerelu',
-                                    layer_list=layers_bn_prerelu, if_store_labels=True,
-                                    if_store_layer_names=True, if_average_spatial=True, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
+    # layerinds = list(filter(lambda x: x % 2 == 0, range(15))) # those are just the relu2 layers, BUT i missed the first half of the blocks.. these are also before relu
+    # ac.store_layer_activations_many(loader, layerinds, out_path_postfix='_bettercifar10single_prerelu',
+    #                                 layer_list=layers_bn_prerelu, if_store_labels=True,
+    #                                 if_store_layer_names=True, if_average_spatial=True, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
     
     # plotting in a ipynb
+
+    # ac.store_layer_activations_many(loader, range(len(layers_bn_afterrelu)), out_path_postfix='_bettercifar10single_afterrelu',
+    #                                 layer_list=layers_bn_afterrelu, if_store_labels=True,
+    #                                 if_store_layer_names=True, if_average_spatial=True, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
+
+    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_val_bettercifar10single_afterrelu_all_samples.pkl',
+                                                          if_pretrained_imagenet=False, layers=layers_bn_afterrelu,
+                                                          neuron_nums=None, only_in_class_samples=False)
 
     ac.assess_binary_separability_1vsAll_whole_network(path_prefix_mnt/'bettercifar10single_nonsparse_afterrelu.pkl', path_prefix_mnt/'df_label_cifar.pkl',
                                                        layers_bn, 10, postfix='_cifar')                                                      
