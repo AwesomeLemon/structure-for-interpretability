@@ -15,7 +15,6 @@ import seaborn as sns
 sns.set_context("paper")
 # import scienceplots
 # plt.style.use(['science','no-latex'])
-from util.util import *
 from scipy.integrate import simps
 import scipy.stats
 

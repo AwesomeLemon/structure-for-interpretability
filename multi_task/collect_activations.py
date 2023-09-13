@@ -41,6 +41,8 @@ try:
     from multi_task.loaders.celeba_loader import CELEBA
     from multi_task.util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
     from multi_task.model_explorer import ModelExplorer
+
+    from multi_task.models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
 except:
     import datasets
     from gan.attgan.data import CustomDataset
@@ -50,7 +52,7 @@ except:
     from util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
     from model_explorer import ModelExplorer
 
-from models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
+    from models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
 
 import glob
 from shutil import copyfile, copy
@@ -1786,13 +1788,16 @@ if __name__ == '__main__':
     #                                 layer_list=layers_bn_afterrelu, if_store_labels=True,
     #                                 if_store_layer_names=True, if_average_spatial=True, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
 
-    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_val_bettercifar10single_afterrelu_all_samples.pkl',
-                                                          if_pretrained_imagenet=False, layers=layers_bn_afterrelu,
-                                                          neuron_nums=None, only_in_class_samples=False)
+    #TODO: skip this
 
-    ac.assess_binary_separability_1vsAll_whole_network(path_prefix_mnt/'bettercifar10single_nonsparse_afterrelu.pkl', path_prefix_mnt/'df_label_cifar.pkl',
-                                                       layers_bn, 10, postfix='_cifar')                                                      
+    # gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, 'grads_val_bettercifar10single_afterrelu_all_samples.pkl',
+    #                                                       if_pretrained_imagenet=False, layers=layers_bn_afterrelu,
+    #                                                       neuron_nums=None, only_in_class_samples=False)
+
+    # ac.assess_binary_separability_1vsAll_whole_network(path_prefix_mnt/'bettercifar10single_nonsparse_afterrelu.pkl', path_prefix_mnt/'df_label_cifar.pkl',
+    #                                                    layers_bn, 10, postfix='_cifar')                                                      
     
+    # TODO: UNTIL HERE
     
     # convert_imagenet_path_to_label_dict_to_df(path_prefix=path_prefix_mnt)
     

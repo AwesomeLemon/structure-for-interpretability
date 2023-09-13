@@ -1,22 +1,31 @@
 import json
 from collections import defaultdict
 
-# import multi_task.datasets as datasets
-# import multi_task.metrics as metrics
-# import multi_task.model_selector_automl as model_selector_automl
-import datasets as datasets
-import metrics as metrics
-import model_selector_automl as model_selector_automl
 import numpy as np
 import pandas
 import torch
 import torchvision
 from torch.autograd import Variable
-from util.util import celeba_dict
 from matplotlib import pyplot as plt
-from util.util import proper_hist
-from util.util import get_relevant_labels_from_batch
+
 import scipy.stats
+
+try:
+    import datasets as datasets
+    import metrics as metrics
+    import model_selector_automl as model_selector_automl
+
+
+    from util.util import celeba_dict
+    from util.util import proper_hist
+    from util.util import get_relevant_labels_from_batch
+except:
+    import multi_task.datasets as datasets
+    import multi_task.metrics as metrics
+    import multi_task.model_selector_automl as model_selector_automl
+    from multi_task.util.util import celeba_dict
+    from multi_task.util.util import proper_hist
+    from multi_task.util.util import get_relevant_labels_from_batch
 
 device = torch.device("cuda" if torch.cuda.is_available() and True else "cpu")
 

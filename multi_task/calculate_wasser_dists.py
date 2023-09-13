@@ -33,7 +33,6 @@ import pandas as pd
 import scipy.stats
 from sklearn.metrics import balanced_accuracy_score, accuracy_score
 
-
 try:
     from multi_task import datasets
     from multi_task.gan.attgan.data import CustomDataset
@@ -42,6 +41,9 @@ try:
     from multi_task.loaders.celeba_loader import CELEBA
     from multi_task.util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
     from multi_task.model_explorer import ModelExplorer
+    from multi_task.distribution_differences import Shift, KolmogorovSmirnovDifference, ModifiedWassersteinDistance
+
+    from multi_task.models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
 except:
     import datasets
     from gan.attgan.data import CustomDataset
@@ -50,8 +52,9 @@ except:
     from loaders.celeba_loader import CELEBA
     from util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
     from model_explorer import ModelExplorer
+    from distribution_differences import Shift, KolmogorovSmirnovDifference, ModifiedWassersteinDistance
 
-from models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
+    from models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
 
 import glob
 from shutil import copyfile, copy
@@ -59,43 +62,6 @@ import math
 import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-def wasserstein_divergence(u_values, v_values, u_weights=None, v_weights=None):
-        # Adapted from scipy.stats.wasserstein_distance and _cdf_distance
-        u_values, u_weights = scipy.stats.stats._validate_distribution(u_values, u_weights)
-        v_values, v_weights = scipy.stats.stats._validate_distribution(v_values, v_weights)
-
-        u_sorter = np.argsort(u_values)
-        v_sorter = np.argsort(v_values)
-
-        all_values = np.concatenate((u_values, v_values))
-        all_values.sort(kind='mergesort')
-
-        # Compute the differences between pairs of successive values of u and v.
-        deltas = np.diff(all_values)
-
-        # Get the respective positions of the values of u and v among the values of
-        # both distributions.
-        u_cdf_indices = u_values[u_sorter].searchsorted(all_values[:-1], 'right')
-        v_cdf_indices = v_values[v_sorter].searchsorted(all_values[:-1], 'right')
-
-        # Calculate the CDFs of u and v using their weights, if specified.
-        if u_weights is None:
-            u_cdf = u_cdf_indices / u_values.size
-        else:
-            u_sorted_cumweights = np.concatenate(([0], np.cumsum(u_weights[u_sorter])))
-            u_cdf = u_sorted_cumweights[u_cdf_indices] / u_sorted_cumweights[-1]
-
-        if v_weights is None:
-            v_cdf = v_cdf_indices / v_values.size
-        else:
-            v_sorted_cumweights = np.concatenate(([0],
-                                                np.cumsum(v_weights[v_sorter])))
-            v_cdf = v_sorted_cumweights[v_cdf_indices] / v_sorted_cumweights[-1]
-
-        # Compute the value of the integral based on the CDFs.
-        # Removes the np.abs to compute a divergence.
-        return np.sum(np.multiply(u_cdf - v_cdf, deltas))
 
 
 class WassersteinCalculator(ModelExplorer):
@@ -280,7 +246,7 @@ class WassersteinCalculator(ModelExplorer):
                                             out_dir='attr_hist_for_neuron_fc_all', used_neurons=None, dataset_type='celeba',
                                             if_calc_wasserstein=False, offset=(0, 0), if_show=True, if_left_lim_zero=True,
                                             layer_list=layers_bn, if_plot=True, cond_neuron_lambda=lambda x: [x], if_rename_layers=True,
-                                            use_wasserstein_divergence=False):
+                                            DistributionDifference=KolmogorovSmirnovDifference()):
         # when if_show==False, hists are plotted and saved, but not shown
         # when if_plot==False, nothing is plotted, only wasserstein distances are calculated
         # target_layer_names = [layer.replace('_', '.') for layer in layer_list] + ['label']
@@ -402,6 +368,8 @@ class WassersteinCalculator(ModelExplorer):
             else:
                 xlim_left = selected_values_min - 0.01
 
+            activation_save_dict = dict()
+
             for cond_i, idx in enumerate(cond_neurons):
                 if if_plot:
                     title = str(idx)
@@ -425,6 +393,7 @@ class WassersteinCalculator(ModelExplorer):
                         else:
                             raise NotImplementedError()
 
+                        class_name = title.capitalize()
                         title = 'Class: ' + title.capitalize()
 
                 if idx not in selected_paths1_cache:
@@ -469,30 +438,12 @@ class WassersteinCalculator(ModelExplorer):
                     # wd = scipy.stats.wasserstein_distance(selected_values_list1, selected_values_list2)
                     # title += '\n'
                     # title += f'{wd:.2f}'
-                    if not use_wasserstein_divergence:
-                        wd_normed = scipy.stats.wasserstein_distance(
-                            (selected_values_list1 - selected_values_min) / (selected_values_max - selected_values_min),
-                            (selected_values_list2 - selected_values_min) / (selected_values_max - selected_values_min))
 
-                        # this means: 2 to the right of 1 -> positive, 2 to the left of 1 -> negative
-                        wd_normed *= np.sign(selected_values_list2.mean() - selected_values_list1.mean())
-                        if if_plot:
-                            title += f'\nMWD: {wd_normed:.2f}'
-                        wasserstein_dists_dict[target_neuron][idx] = wd_normed
-                    else:
-                        # wd_normed = wasserstein_divergence(
-                            # (selected_values_list1 - selected_values_min) / (selected_values_max - selected_values_min),
-                            # (selected_values_list2 - selected_values_min) / (selected_values_max - selected_values_min))
-                        
-                        wd = wasserstein_divergence(
-                            selected_values_list1,
-                            selected_values_list2)
+                    d = DistributionDifference.compute(selected_values_list1, selected_values_list2)
+                    if if_plot:
+                            title += f'\n{DistributionDifference.pretty_name()}: {d:.2f}'
 
-                        # the sign should match automatically
-                        if if_plot:
-                            title += f'\nShift: {wd:.2f}'
-                        wasserstein_dists_dict[target_neuron][idx] = wd
-
+                    wasserstein_dists_dict[target_neuron][idx] = d
 
                 if if_plot:
                     proper_hist(selected_values_list2, bin_size=bin_size, ax=axs[cond_i], xlim_left=xlim_left,
@@ -509,6 +460,8 @@ class WassersteinCalculator(ModelExplorer):
                     handles, labels = axs[cond_i].get_legend_handles_labels()
                     axs[cond_i].legend(handles[::-1], labels[::-1], fontsize=fontsize-2)
 
+                    activation_save_dict[title] = {"Out-of-class": selected_values_list1, "In-class": selected_values_list2}
+
 
 
             if if_plot:
@@ -516,16 +469,16 @@ class WassersteinCalculator(ModelExplorer):
                 title_name = f'{target_layer_idx}/{target_layer_names[target_layer_idx]}_{target_neuron}'
                 plt.suptitle(title_name)
                 plt.tight_layout()
-                wdiv_str = "_shift" if use_wasserstein_divergence else ""
-                plt.savefig(f'{out_dir}/hist_{plot_name}{wdiv_str}.png', format='png')#, bbox_inches='tight', pad_inches=0)
-                plt.savefig(f'{out_dir}/hist_{plot_name}{wdiv_str}.svg', format='svg')#, bbox_inches='tight', pad_inches=0)
+                plt.savefig(f'{out_dir}/hist_{plot_name}{DistributionDifference.save_name()}.png', format='png')#, bbox_inches='tight', pad_inches=0)
+                plt.savefig(f'{out_dir}/hist_{plot_name}{DistributionDifference.save_name()}.svg', format='svg')#, bbox_inches='tight', pad_inches=0)
                 if if_show:
                     plt.show()
                 plt.close()
 
+                np.save(f'{out_dir}/acts_{plot_name}{DistributionDifference.save_name()}.npy', activation_save_dict, allow_pickle=True)
+
         if if_calc_wasserstein:
-            wname = "shift" if use_wasserstein_divergence else "dist"
-            np.save(f'wasser_dists/wasser_{wname}_' + out_dir + '_' + str(target_layer_idx) + '.npy', wasserstein_dists_dict, allow_pickle=True)
+            np.save(f'wasser_dists/wasser_{DistributionDifference.save_name()}_' + out_dir + '_' + str(target_layer_idx) + '.npy', wasserstein_dists_dict, allow_pickle=True)
 
     def wasserstein_barplot(self, suffix, target_neurons_dict, classes_dict, n_show=10, if_show=False, out_path_suffix=''):
         n_best = n_show // 2
@@ -567,7 +520,7 @@ class WassersteinCalculator(ModelExplorer):
                                                     sorted_dict_path=None,
                                                     used_neurons=None, dataset_type='celeba', if_calc_wasserstein=False,
                                                     offset=(0, 0), if_show=True, if_force_recalculate=False, if_dont_save=False,
-                                                    if_left_lim_zero=True, layer_list=layers_bn, if_plot=True, if_rename_layers=True, use_wasserstein_divergence=False):
+                                                    if_left_lim_zero=True, layer_list=layers_bn, if_plot=True, if_rename_layers=True, DistributionDifference=KolmogorovSmirnovDifference()):
         '''
 
         :param target_dict: 'all_network' OR {target_layer_idx -> [neuron_indices] OR 'all'}
@@ -670,7 +623,7 @@ class WassersteinCalculator(ModelExplorer):
                                                    lambda x: [x],
                                                    #cond_neuron_lambda=lambda x: hypernym_idx_to_imagenet_idx[x],
                                                    if_rename_layers,
-                                                   use_wasserstein_divergence
+                                                   DistributionDifference
                                                   )
 
     def convert_sorted_dict_per_layer_per_neuron_to_dataframe(self, sorted_dict_per_layer_per_neuron, out_path=None):
@@ -786,7 +739,7 @@ if __name__ == '__main__':
     # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask_layer4narrower1.json'
 
 
-    model_to_use = 'my'
+    model_to_use = 'my' # 'resnet18'
     if_pretrained_imagenet = model_to_use != 'my'
     wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
     params, configs = wc.params, wc.configs
@@ -963,6 +916,8 @@ if __name__ == '__main__':
     #                                                if_calc_wasserstein=True, offset='argmax', if_show=False,
     #                                                if_force_recalculate=False, if_left_lim_zero=False,
     #                                                layer_list=efficientnet_layers, if_plot=False, if_rename_layers=False)
+    
+    
     moniker = 'cifar_for_paper'
     wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, f'{moniker}.pkl', {5:[103], 14:[393]},
                                                    f'attr_hist_{moniker}', if_cond_label=False,
@@ -972,7 +927,9 @@ if __name__ == '__main__':
                                                    if_calc_wasserstein=True, offset='argmax', if_show=True,
                                                    if_force_recalculate=False, if_left_lim_zero=True,
                                                    layer_list=layers_bn_afterrelu, if_plot=True, if_rename_layers=True,
-                                                   use_wasserstein_divergence=True)
+                                                   DistributionDifference=KolmogorovSmirnovDifference())
+    
+    exit()
 
     # chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
     # ac.wasserstein_barplot('attr_hist_pretrained_imagenet_prerelu', dict(zip(range(15), [range(c) for c in chunks])),
@@ -1043,45 +1000,48 @@ if __name__ == '__main__':
     #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False)
     
     path_prefix_mnt = Path("/mnt/raid/data/chebykin/pycharm_project_AA/")
+    
     # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single_nonsparse_afterrelu.pkl', 'all_network',
     #                                                'attr_hist_bettercifar10single', if_cond_label=False,
     #                                                used_neurons='resnet_full',
     #                                                sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single.npy',
     #                                                if_calc_wasserstein=True, offset=(0.5, 0.5),
-    #                                                dataset_type='cifar', if_show=False, use_wasserstein_divergence=True)
+    #                                                dataset_type='cifar', if_show=False, DistributionDifference=KolmogorovSmirnovDifference())
 
-    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'pretrained_imagenet_afterrelu.pkl', 'all_network', 'attr_hist_pretrained_imagenet_afterrelu', if_cond_label=False, used_neurons='resnet_full', dataset_type='imagenet_val', sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_pretrained_imagenet_afterrelu.npy', if_plot=False,if_calc_wasserstein=True, offset='argmax', if_show=False, use_wasserstein_divergence=True)
+    # # this ignores the loader and uses the precomputed activations from the validation set
+    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'pretrained_imagenet_afterrelu.pkl', 'all_network', 'attr_hist_pretrained_imagenet_afterrelu', if_cond_label=False, used_neurons='resnet_full', dataset_type='imagenet_val', sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_pretrained_imagenet_afterrelu.npy', if_plot=False,if_calc_wasserstein=True, offset='argmax', if_show=False, DistributionDifference=KolmogorovSmirnovDifference())
+    
+    # exit()
+
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single2_nonsparse_afterrelu.pkl', 'all_network',
+                                                   'attr_hist_bettercifar10single2', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single2.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, DistributionDifference=KolmogorovSmirnovDifference())
+
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single3_nonsparse_afterrelu.pkl',
+                                                   'all_network',
+                                                   'attr_hist_bettercifar10single3', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single3.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, DistributionDifference=KolmogorovSmirnovDifference())
+    
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single4_nonsparse_afterrelu.pkl',
+                                                   'all_network',
+                                                   'attr_hist_bettercifar10single4', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single4.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, DistributionDifference=KolmogorovSmirnovDifference())
+    
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/     'bettercifar10single5_nonsparse_afterrelu.pkl',
+                                                   'all_network',
+                                                   'attr_hist_bettercifar10single5', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single5.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, DistributionDifference=KolmogorovSmirnovDifference())
     
     exit()
 
-    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single2_nonsparse_afterrelu.pkl', 'all_network',
-    #                                                'attr_hist_bettercifar10single2', if_cond_label=False,
-    #                                                used_neurons='resnet_full',
-    #                                                if_nonceleba=True,
-    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single2.npy',
-    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False)
-
-    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single3_nonsparse_afterrelu.pkl',
-    #                                                'all_network',
-    #                                                'attr_hist_bettercifar10single3', if_cond_label=False,
-    #                                                used_neurons='resnet_full',
-    #                                                if_nonceleba=True,
-    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single3.npy',
-    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False)
-    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single4_nonsparse_afterrelu.pkl',
-    #                                                'all_network',
-    #                                                'attr_hist_bettercifar10single4', if_cond_label=False,
-    #                                                used_neurons='resnet_full',
-    #                                                if_nonceleba=True,
-    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single4.npy',
-    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False)
-    # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'bettercifar10single5_nonsparse_afterrelu.pkl',
-    #                                                'all_network',
-    #                                                'attr_hist_bettercifar10single5', if_cond_label=False,
-    #                                                used_neurons='resnet_full',
-    #                                                if_nonceleba=True,
-    #                                                sorted_dict_path='img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single5.npy',
-    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), if_show=False)
     # ac.compute_attr_hist_for_neuron_pandas_wrapper(loader, 'imagenette_nonsparse_afterrelu.pkl',
     #                                                'all_network',
     #                                                'attr_hist_imagenette', if_cond_label=False,

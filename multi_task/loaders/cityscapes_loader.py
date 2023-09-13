@@ -8,8 +8,12 @@ import imageio
 from torch.utils import data
 from torch.utils.data import DataLoader
 
-from loaders.loader_utils import recursive_glob
-from loaders.segmentation_augmentations import *
+try:
+    from loaders.loader_utils import recursive_glob
+    from loaders.segmentation_augmentations import *
+except:
+    from multi_task.loaders.loader_utils import recursive_glob
+    from multi_task.loaders.segmentation_augmentations import *
 
 import matplotlib.pyplot as plt
 

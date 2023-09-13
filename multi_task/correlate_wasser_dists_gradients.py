@@ -45,6 +45,8 @@ try:
     from multi_task.loaders.celeba_loader import CELEBA
     from multi_task.util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
     from multi_task.model_explorer import ModelExplorer
+
+    from multi_task.models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
 except:
     import datasets
     from gan.attgan.data import CustomDataset
@@ -54,7 +56,7 @@ except:
     from util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
     from model_explorer import ModelExplorer
 
-from models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
+    from models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
 
 import glob
 from shutil import copyfile, copy
@@ -646,113 +648,113 @@ if __name__ == '__main__':
 
     local_path = "local_storage/"
 
-    #TODO: without skip connections
+    # #DONE: without skip connections -> SKIP
 
-    param_file = 'params/binmatr2_cifar_sgd1bias_fc_noskip_batch128_weightdecay3e-4_singletask.json'
+    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_noskip_batch128_weightdecay3e-4_singletask.json'
 
-    #TODO: CIFAR10 1
+    # #TODO: CIFAR10 1
 
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/15_31_on_October_01/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_240_model.pkl'
-    
-    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
-    params, configs = gwc.params, gwc.configs
-    
-    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
-
-    #TODO: CIFAR10 3
-    
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_10_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
-
-    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
-    params, configs = gwc.params, gwc.configs
-    
-    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single2_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
-
-    #TODO: CIFAR10 4
-    
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/13_11_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
-
-    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
-    params, configs = gwc.params, gwc.configs
-    
-    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single3_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
-
-    #TODO: CIFAR10 5
-    
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/13_15_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
-
-    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
-    params, configs = gwc.params, gwc.configs
-    
-    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single4_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
-
-    #TODO: CIFAR10 2
-    
-    #   fine-tuned with fixed connections very sparse cifar [single head] ; AKA cifar2
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_58_on_October_02/optimizer=SGD|batch_size=128|lr=0.001|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0_240_model.pkl'
-    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
-
-    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
-    params, configs = gwc.params, gwc.configs
-    
-    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single5_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
-
-    #DONE: with skip connections
-
-    # #DONE: CIFAR10 1
-
-    # #   single-head cifar
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/15_31_on_October_01/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_240_model.pkl'
     
     # gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
     # params, configs = gwc.params, gwc.configs
     
     # gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
 
-    # #DONE: CIFAR10 2
+    # #TODO: CIFAR10 3
     
-    # #   single-head cifar 2
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_10_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
 
     # gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
     # params, configs = gwc.params, gwc.configs
     
     # gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single2_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
 
-    # #DONE: CIFAR10 3
+    # #TODO: CIFAR10 4
     
-    # #  single-head cifar 3
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/13_11_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
 
     # gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
     # params, configs = gwc.params, gwc.configs
     
     # gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single3_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
 
-    # #DONE: CIFAR10 4
+    # #TODO: CIFAR10 5
     
-    # #  single-head cifar 4
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/13_15_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
 
     # gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
     # params, configs = gwc.params, gwc.configs
     
     # gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single4_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
 
-    # #DONE: CIFAR10 5
+    # #TODO: CIFAR10 2
     
-    # #  single-head cifar 5
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    # #   fine-tuned with fixed connections very sparse cifar [single head] ; AKA cifar2
+    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_58_on_October_02/optimizer=SGD|batch_size=128|lr=0.001|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0_240_model.pkl'
     # param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
 
     # gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
     # params, configs = gwc.params, gwc.configs
     
     # gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single5_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
+
+    #DONE: with skip connections
+
+    #DONE: CIFAR10 1
+
+    #   single-head cifar
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    
+    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
+    params, configs = gwc.params, gwc.configs
+    
+    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
+
+    #DONE: CIFAR10 2
+    
+    #   single-head cifar 2
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+
+    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
+    params, configs = gwc.params, gwc.configs
+    
+    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single2_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
+
+    #DONE: CIFAR10 3
+    
+    #  single-head cifar 3
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+
+    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
+    params, configs = gwc.params, gwc.configs
+    
+    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single3_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
+
+    #DONE: CIFAR10 4
+    
+    #  single-head cifar 4
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+
+    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
+    params, configs = gwc.params, gwc.configs
+    
+    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single4_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
+
+    #DONE: CIFAR10 5
+    
+    #  single-head cifar 5
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+
+    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
+    params, configs = gwc.params, gwc.configs
+    
+    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single5_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
 
     # # DONE: imagenet test set
     # gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_pretrained_imagenet_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)

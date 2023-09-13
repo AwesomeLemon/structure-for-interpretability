@@ -26,7 +26,6 @@ from matplotlib import pyplot as plt
 from sortedcontainers import SortedDict
 from torch.nn.functional import softmax
 from torch.utils import data
-from util.util import *
 import pandas as pd
 import scipy.stats
 from sklearn.metrics import balanced_accuracy_score, accuracy_score
@@ -35,10 +34,13 @@ from sklearn.metrics import balanced_accuracy_score, accuracy_score
 try:
     from multi_task import datasets
     from multi_task.gan.attgan.data import CustomDataset
-    from multi_task.gan.change_attributes import AttributeChanger
+    # from multi_task.gan.change_attributes import AttributeChanger
     from multi_task.load_model import load_trained_model, eval_trained_model
     from multi_task.loaders.celeba_loader import CELEBA
     from multi_task.util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
+    from multi_task.util.util import *
+
+    from multi_task.models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
 except:
     import datasets
     from gan.attgan.data import CustomDataset
@@ -46,8 +48,9 @@ except:
     from load_model import load_trained_model
     from loaders.celeba_loader import CELEBA
     from util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
+    from util.util import *
 
-from models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
+    from models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
 from efficientnet_pytorch import EfficientNet
 
 import glob

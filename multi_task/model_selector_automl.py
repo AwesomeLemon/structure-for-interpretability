@@ -1,15 +1,26 @@
 # import multi_task.models.my_multi_faces_resnet as my_resnet
 # import multi_task.models.multi_faces_resnet as default_resnet
 
-import models.my_multi_faces_resnet as my_resnet
-import models.multi_faces_resnet as default_resnet
-import models.groupconv2_multi_faces_resnet as groupconv_resnet
-import models.learnablegroups_multi_faces_resnet as learnablegroups_resnet
-import models.maskcon_multi_faces_resnet as maskcon_multi_faces_resnet
-import models.maskcon2_multi_faces_resnet as maskcon2_multi_faces_resnet
-import models.binmatr2_multi_faces_resnet as binmatr2_multi_faces_resnet
-import models.binmatr_fullconv_multi_faces_resnet as binmatr_fullconv_multi_faces_resnet
-import models.pspnet as pspnet
+try:
+    import models.my_multi_faces_resnet as my_resnet
+    import models.multi_faces_resnet as default_resnet
+    import models.groupconv2_multi_faces_resnet as groupconv_resnet
+    import models.learnablegroups_multi_faces_resnet as learnablegroups_resnet
+    import models.maskcon_multi_faces_resnet as maskcon_multi_faces_resnet
+    import models.maskcon2_multi_faces_resnet as maskcon2_multi_faces_resnet
+    import models.binmatr2_multi_faces_resnet as binmatr2_multi_faces_resnet
+    import models.binmatr_fullconv_multi_faces_resnet as binmatr_fullconv_multi_faces_resnet
+    import models.pspnet as pspnet
+except:
+    import multi_task.models.my_multi_faces_resnet as my_resnet
+    import multi_task.models.multi_faces_resnet as default_resnet
+    import multi_task.models.groupconv2_multi_faces_resnet as groupconv_resnet
+    import multi_task.models.learnablegroups_multi_faces_resnet as learnablegroups_resnet
+    import multi_task.models.maskcon_multi_faces_resnet as maskcon_multi_faces_resnet
+    import multi_task.models.maskcon2_multi_faces_resnet as maskcon2_multi_faces_resnet
+    import multi_task.models.binmatr2_multi_faces_resnet as binmatr2_multi_faces_resnet
+    import multi_task.models.binmatr_fullconv_multi_faces_resnet as binmatr_fullconv_multi_faces_resnet
+    import multi_task.models.pspnet as pspnet
 
 # from multi_task.models.my_multi_faces_resnet import ResNetSeparated, BasicBlock, FaceAttributeDecoder
 import torch

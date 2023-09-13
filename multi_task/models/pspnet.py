@@ -6,7 +6,11 @@ import torch.nn.functional as F
 import torchvision
 # import models.resnet_mit as resnet
 device = torch.device("cuda" if torch.cuda.is_available() and True else "cpu")
-from models.binmatr2_multi_faces_resnet import BinarizeByThreshold, kronecker
+
+try:
+    from models.binmatr2_multi_faces_resnet import BinarizeByThreshold, kronecker
+except:
+    from multi_task.models.binmatr2_multi_faces_resnet import BinarizeByThreshold, kronecker
 
 
 def get_segmentation_encoder():

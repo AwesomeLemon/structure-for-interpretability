@@ -2,17 +2,25 @@ import operator
 import torch
 from torchvision import transforms
 import torchvision
-from loaders.cifar10_loader import CIFAR10
-from loaders.fashionmnist_loader import FashionMNIST
-from loaders.segmentation_augmentations import *
-from loaders.celeba_loader import CELEBA
-from loaders.cityscapes_loader import CITYSCAPES
 # from multi_task.loaders.celeba_loader import CELEBA
 from torch.utils.data import ConcatDataset
 # Setup Augmentations
 # cityscapes_augmentations= Compose([RandomRotate(10),
 #                                    RandomHorizontallyFlip()])
-from loaders.broden_loader import BrodenDataset, ScaleSegmentation
+try:
+    from loaders.cifar10_loader import CIFAR10
+    from loaders.fashionmnist_loader import FashionMNIST
+    from loaders.segmentation_augmentations import *
+    from loaders.celeba_loader import CELEBA
+    from loaders.cityscapes_loader import CITYSCAPES
+    from loaders.broden_loader import BrodenDataset, ScaleSegmentation
+except:
+    from multi_task.loaders.cifar10_loader import CIFAR10
+    from multi_task.loaders.fashionmnist_loader import FashionMNIST
+    from multi_task.loaders.segmentation_augmentations import *
+    from multi_task.loaders.celeba_loader import CELEBA
+    from multi_task.loaders.cityscapes_loader import CITYSCAPES
+    from multi_task.loaders.broden_loader import BrodenDataset, ScaleSegmentation
 
 
 def global_transformer():

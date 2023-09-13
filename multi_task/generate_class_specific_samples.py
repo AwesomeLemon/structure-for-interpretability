@@ -15,8 +15,12 @@ from torch.optim import SGD, Adam
 from torchvision import models
 
 # from multi_task.load_model import load_trained_model
-from load_model import load_trained_model
-from loaders.celeba_loader import CELEBA
+try:
+    from load_model import load_trained_model
+    from loaders.celeba_loader import CELEBA
+except:
+    from multi_task.load_model import load_trained_model
+    from multi_task.loaders.celeba_loader import CELEBA
 
 # from multi_task.util.util import *
 import torch
