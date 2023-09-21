@@ -31,16 +31,16 @@ sns.set_context("paper")
 from sortedcontainers import SortedDict
 from torch.nn.functional import softmax
 from torch.utils import data
-from util.util import *
 import pandas as pd
 import scipy.stats
 from sklearn.metrics import balanced_accuracy_score, accuracy_score
 
 
 try:
+    from multi_task.util.util import *
     from multi_task import datasets
-    from multi_task.gan.attgan.data import CustomDataset
-    from multi_task.gan.change_attributes import AttributeChanger
+    # from multi_task.gan.attgan.data import CustomDataset
+    # from multi_task.gan.change_attributes import AttributeChanger
     from multi_task.load_model import load_trained_model, eval_trained_model
     from multi_task.loaders.celeba_loader import CELEBA
     from multi_task.util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
@@ -48,6 +48,7 @@ try:
 
     from multi_task.models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
 except:
+    from util.util import *
     import datasets
     from gan.attgan.data import CustomDataset
     # from gan.change_attributes import AttributeChanger
@@ -661,7 +662,7 @@ if __name__ == '__main__':
     
     gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single_noskip_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
 
-    #TODO: CIFAR10 3
+    #TODO: CIFAR10 2
     
     save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_10_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
 
@@ -670,6 +671,15 @@ if __name__ == '__main__':
     
     gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single2_noskip_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
 
+    #TODO: CIFAR10 3
+    
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_15_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
+
+    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
+    params, configs = gwc.params, gwc.configs
+    
+    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single3_noskip_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
+
     #TODO: CIFAR10 4
     
     save_model_path = r'/mnt/raid/data/chebykin/saved_models/13_11_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
@@ -677,7 +687,7 @@ if __name__ == '__main__':
     gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
     params, configs = gwc.params, gwc.configs
     
-    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single3_noskip_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
+    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single4_noskip_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
 
     #TODO: CIFAR10 5
     
@@ -686,18 +696,9 @@ if __name__ == '__main__':
     gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
     params, configs = gwc.params, gwc.configs
     
-    gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single4_noskip_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
-
-    #TODO: CIFAR10 2
-    
-    #   fine-tuned with fixed connections very sparse cifar [single head] ; AKA cifar2
-    save_model_path = r'/mnt/raid/data/chebykin/saved_models/10_58_on_October_02/optimizer=SGD|batch_size=128|lr=0.001|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.0_240_model.pkl'
-    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
-
-    gwc = GradWassersteinCorrelator(save_model_path, param_file, model_to_use)
-    params, configs = gwc.params, gwc.configs
-    
     gwc.calc_gradients_wrt_output_whole_network_all_tasks(loader, f'{local_path}grads_bettercifar10single5_noskip_afterrelu_val_all_samples.pkl', if_pretrained_imagenet, neuron_nums=None, only_in_class_samples=False)
+
+    exit()
 
     # #DONE: with skip connections
 

@@ -1,0 +1,13 @@
+{
+    "files.watcherExclude": {
+        "**/*.csv": true,
+        "**/*.npy": true,
+        "**/*.npz": true,
+        "**/*.pkl": true,
+        "**/*.png": true,
+        "**/*.svg": true,
+        "**/attr*/**": true,
+        "**/bak/**": true,
+        "**/local_storage/**": true
+    }
+}

@@ -27,23 +27,29 @@ plt.style.use('seaborn-paper')
 from sortedcontainers import SortedDict
 from torch.nn.functional import softmax
 from torch.utils import data
-from util.util import *
 import pandas as pd
 import scipy.stats
 from sklearn.metrics import balanced_accuracy_score, confusion_matrix, accuracy_score
 from sklearn.model_selection import train_test_split
 
+from joblib import Parallel, delayed
+
 try:
+    from multi_task.util.util import *
     from multi_task import datasets
-    from multi_task.gan.attgan.data import CustomDataset
-    from multi_task.gan.change_attributes import AttributeChanger
+    # from multi_task.gan.attgan.data import CustomDataset
+    # from multi_task.gan.change_attributes import AttributeChanger
     from multi_task.load_model import load_trained_model, eval_trained_model
     from multi_task.loaders.celeba_loader import CELEBA
     from multi_task.util.dicts import imagenet_dict, broden_categories_list, hypernym_idx_to_imagenet_idx, hypernym_dict
     from multi_task.model_explorer import ModelExplorer
 
     from multi_task.models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
+
+    from multi_task.correlate_wasser_dists_gradients import GradWassersteinCorrelator
 except:
+    from util.util import *
+
     import datasets
     from gan.attgan.data import CustomDataset
     # from gan.change_attributes import AttributeChanger
@@ -54,14 +60,14 @@ except:
 
     from models.binmatr2_multi_faces_resnet import BasicBlockAvgAdditivesUser
 
+    from correlate_wasser_dists_gradients import GradWassersteinCorrelator
+
 import glob
 from shutil import copyfile, copy
 import math
 import torch.nn.functional as F
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import cross_validate
-
-from correlate_wasser_dists_gradients import GradWassersteinCorrelator
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -413,7 +419,7 @@ class ActivityCollector(ModelExplorer):
         print(f'{target_layer_idx}_{target_neuron}: {cifar10_dict[cond_idx1]} vs {cifar10_dict[cond_idx2]}: ',
               cv_results['test_score'])
 
-    def assess_binary_separability_1vsAll_whole_network(self, df_path, df_labels_path, layer_list, n_classes, postfix):
+    def assess_binary_separability_1vsAll_whole_network(self, df_path, df_labels_path, layer_list, n_classes, postfix, skip_layer_indices=[]):
         target_layer_names = [layer.replace('_', '.') for layer in layer_list]
         df = pd.read_pickle(df_path)
         df_labels = pd.read_pickle(df_labels_path)
@@ -425,28 +431,18 @@ class ActivityCollector(ModelExplorer):
 
         print(df_labels_np.shape)
         chunks = [64, 64, 64, 128, 128, 128, 128, 256, 256, 256, 256, 512, 512, 512, 512]
-        res_data = []
         for i, target_layer_name in enumerate(target_layer_names):
-            # if i == 0:
-            #     continue
+            print('reset res_data')
+            res_data = []
+            if i in skip_layer_indices:
+                continue
             for target_neuron in range(chunks[i]):
                 print(i, target_neuron)
                 target_neuron_activations = np.array(df.loc[(df['layer_name'] == target_layer_name) &
                                                        (df['neuron_idx'] == target_neuron)].drop(['layer_name', 'neuron_idx'],
                                                                                                  axis=1))[0].reshape(-1, 1)
-                for class_ind in range(n_classes):
-                    # if class_ind % 50 == 0:
-                    #     print(class_ind)
-                    # labels1 = np.array(df_labels.loc[(df_labels['layer_name'] == 'label') & (df_labels['neuron_idx'] == class_ind)]
-                    #                    .drop(['layer_name', 'neuron_idx'], axis=1))[0]
-                    # labels1 = np.array(df_labels.loc[(df_labels['neuron_idx'] == class_ind)])[0, 2:]
-                    # train_pos = target_neuron_activations[labels1 == 1]
-                    # lbl_pos = np.array([1] * len(train_pos))
-                    # train_neg = target_neuron_activations[labels1 != 1]
-                    # lbl_neg = np.array([-1] * len(train_neg))
-                    # data = np.hstack((train_pos, train_neg)).reshape(-1, 1)
-                    # lbl = np.hstack((lbl_pos, lbl_neg))
-                    # labels1[labels1 == 0] = -1
+
+                def compute_bin_sep(class_ind, target_neuron_activations, df_labels_np, postfix):
                     data = target_neuron_activations
                     lbl = df_labels_np[class_ind]#labels1.astype('int')
 
@@ -455,12 +451,54 @@ class ActivityCollector(ModelExplorer):
                         cv_results = cross_validate(clf, data, lbl, cv=5, scoring='balanced_accuracy', n_jobs=-1)
                         blncd_acc = np.mean(cv_results['test_score']) # average over folds
                     else:
-                        X_train, X_test, y_train, y_test = train_test_split(data, lbl, test_size=0.2)
-                        clf = clf.fit(X_train, y_train)
-                        y_test_predicted = clf.predict(X_test)
-                        blncd_acc = balanced_accuracy_score(y_test, y_test_predicted)
-                    res_data.append([target_layer_name, target_neuron, class_ind, blncd_acc])
-                    # print(i, target_neuron, class_ind, blncd_acc)
+                        baccs = []
+                        for i in range(1):
+                            # print(i)
+                            X_train, X_test, y_train, y_test = train_test_split(data, lbl, test_size=0.2)
+                            clf = clf.fit(X_train, y_train)
+                            y_test_predicted = clf.predict(X_test)
+                            blncd_acc = balanced_accuracy_score(y_test, y_test_predicted)
+                            baccs.append(blncd_acc)
+                        blncd_acc = np.mean(baccs)
+                    return blncd_acc
+
+                blncd_accs = Parallel(n_jobs=10)(delayed(compute_bin_sep)(class_ind, target_neuron_activations, df_labels_np, postfix) for class_ind in range(n_classes))
+
+                for class_ind in range(n_classes):
+                    res_data.append([target_layer_name, target_neuron, class_ind, blncd_accs[class_ind]])
+
+                # for class_ind in range(n_classes):
+                #     # if class_ind % 50 == 0:
+                #     #     print(class_ind)
+                #     # labels1 = np.array(df_labels.loc[(df_labels['layer_name'] == 'label') & (df_labels['neuron_idx'] == class_ind)]
+                #     #                    .drop(['layer_name', 'neuron_idx'], axis=1))[0]
+                #     # labels1 = np.array(df_labels.loc[(df_labels['neuron_idx'] == class_ind)])[0, 2:]
+                #     # train_pos = target_neuron_activations[labels1 == 1]
+                #     # lbl_pos = np.array([1] * len(train_pos))
+                #     # train_neg = target_neuron_activations[labels1 != 1]
+                #     # lbl_neg = np.array([-1] * len(train_neg))
+                #     # data = np.hstack((train_pos, train_neg)).reshape(-1, 1)
+                #     # lbl = np.hstack((lbl_pos, lbl_neg))
+                #     # labels1[labels1 == 0] = -1
+                #     data = target_neuron_activations
+                #     lbl = df_labels_np[class_ind]#labels1.astype('int')
+
+                #     clf = LogisticRegression(random_state=0, penalty='l2', class_weight="balanced")
+                #     if 'nofolds' not in postfix: # proper cross-validation takes too long on imagenet
+                #         cv_results = cross_validate(clf, data, lbl, cv=5, scoring='balanced_accuracy', n_jobs=-1)
+                #         blncd_acc = np.mean(cv_results['test_score']) # average over folds
+                #     else:
+                #         baccs = []
+                #         for i in range(1):
+                #             # print(i)
+                #             X_train, X_test, y_train, y_test = train_test_split(data, lbl, test_size=0.2)
+                #             clf = clf.fit(X_train, y_train)
+                #             y_test_predicted = clf.predict(X_test)
+                #             blncd_acc = balanced_accuracy_score(y_test, y_test_predicted)
+                #             baccs.append(blncd_acc)
+                #         blncd_acc = np.mean(baccs)
+                #     res_data.append([target_layer_name, target_neuron, class_ind, blncd_acc])
+                #     # print(i, target_neuron, class_ind, blncd_acc)
             df_res = pd.DataFrame(res_data, columns=['layer_name', 'neuron_idx', 'class_idx', 'mean_balanced_acc'])
             df_res.to_csv('binary_separability' + postfix + f'_{i}.csv')
 
