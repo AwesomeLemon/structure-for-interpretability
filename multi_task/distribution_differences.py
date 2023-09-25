@@ -41,7 +41,7 @@ def wasserstein_divergence(u_values, v_values, u_weights=None, v_weights=None):
         return np.sum(np.multiply(u_cdf - v_cdf, deltas))
 
 
-def kolmogorov_smirnov_difference(u_values, v_values, u_weights=None, v_weights=None):
+def kolmogorov_smirnov_difference(u_values, v_values, u_weights=None, v_weights=None, return_position=False):
         # Adapted from scipy.stats.wasserstein_distance and _cdf_distance
         u_values, u_weights = scipy.stats._stats_py._validate_distribution(u_values, u_weights)
         v_values, v_weights = scipy.stats._stats_py._validate_distribution(v_values, v_weights)
@@ -77,6 +77,14 @@ def kolmogorov_smirnov_difference(u_values, v_values, u_weights=None, v_weights=
         diffs = u_cdf - v_cdf
         d_arr = np.array([diffs.min(), diffs.max()])
         ksd = d_arr[np.argmax(np.abs(d_arr))]
+
+        if return_position:
+            if np.argmax(np.abs(d_arr)) == 0:
+                x_ind = diffs.argmin()
+            else:
+                x_ind = diffs.argmax()
+            x_val = all_values[x_ind]
+            return ksd, x_val
 
         return ksd
 
