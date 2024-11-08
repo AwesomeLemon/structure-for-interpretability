@@ -231,17 +231,21 @@ class ActivityCollector(ModelExplorer):
                     # 03.10.2021: try to spare memory, save via numpy => it worked, but I uncommented the stuff above
                     #                           to avoid replication problems
                     np.save(filename, np.vstack(activations[target_layer_names[i]]))
+                    print(f'saved to: {filename}')
             else:
                 if not if_store_layer_names:
                     filename = 'representatives_kmeans14_50_alllayers.npy'
                     np.save(filename, activations)
                 else:
-                    filename = out_path_prefix/f'activations_on_validation_averaged_spatial{out_path_postfix}.npy'
-                    # filename = f'{out_path_prefix}activations_on_validation_preserved_spatial_{out_path_postfix}.npy'
+                    if if_average_spatial:
+                        filename = out_path_prefix/f'activations_on_validation_averaged_spatial{out_path_postfix}.npy'
+                    else:
+                        filename = out_path_prefix/f'activations_on_validation_preserved_spatial{out_path_postfix}.npy'
 
                     activations['target_layer_names'] = target_layer_names
 
                     np.save(filename, activations, allow_pickle=True)
+                    print(f'saved to: {filename}')
         if if_store_labels:
             print('saving labels')
             np.save(out_path_prefix/f'labels{out_path_postfix}.npy', labels)
@@ -1749,6 +1753,147 @@ if __name__ == '__main__':
     
     _, val_loader, tst_loader = datasets.get_dataset(params, configs)
     loader = val_loader#tst_loader#
+
+    # TODO: Normal
+
+    # TODO: CIFAR 1
+
+    if_average_spatial = True
+
+    #   single-head cifar
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    
+    ac = ActivityCollector(save_model_path, param_file, model_to_use=model_to_use)
+
+    ac.store_layer_activations_many(loader, range(len(layers_bn_prerelu)), out_path_postfix='_bettercifar10single_prerelu',
+                                    layer_list=layers_bn_prerelu, if_store_labels=True,
+                                    if_store_layer_names=True, if_average_spatial=if_average_spatial, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
+    
+    
+    # TODO: CIFAR 2
+
+    #   single-head cifar 2
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    
+    ac = ActivityCollector(save_model_path, param_file, model_to_use=model_to_use)
+
+    ac.store_layer_activations_many(loader, range(len(layers_bn_prerelu)), out_path_postfix='_bettercifar10single2_prerelu',
+                                    layer_list=layers_bn_prerelu, if_store_labels=True,
+                                    if_store_layer_names=True, if_average_spatial=if_average_spatial, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
+    
+    # TODO: CIFAR 3
+
+    #  single-head cifar 3
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+
+    ac = ActivityCollector(save_model_path, param_file, model_to_use=model_to_use)
+
+    ac.store_layer_activations_many(loader, range(len(layers_bn_prerelu)), out_path_postfix='_bettercifar10single3_prerelu',
+                                    layer_list=layers_bn_prerelu, if_store_labels=True,
+                                    if_store_layer_names=True, if_average_spatial=if_average_spatial, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
+    
+    # TODO: CIFAR 4
+
+    #  single-head cifar 4
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+    
+    ac = ActivityCollector(save_model_path, param_file, model_to_use=model_to_use)
+
+    ac.store_layer_activations_many(loader, range(len(layers_bn_prerelu)), out_path_postfix='_bettercifar10single4_prerelu',
+                                    layer_list=layers_bn_prerelu, if_store_labels=True,
+                                    if_store_layer_names=True, if_average_spatial=if_average_spatial, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
+    
+    # TODO: CIFAR 5
+
+    #  single-head cifar 5
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+
+    ac = ActivityCollector(save_model_path, param_file, model_to_use=model_to_use)
+
+    ac.store_layer_activations_many(loader, range(len(layers_bn_prerelu)), out_path_postfix='_bettercifar10single5_prerelu',
+                                    layer_list=layers_bn_afterrelu, if_store_labels=True,
+                                    if_store_layer_names=True, if_average_spatial=if_average_spatial, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
+
+    exit()
+
+
+    # TODO: Normal
+
+    # TODO: CIFAR 1
+
+    if_average_spatial = True
+
+    #   single-head cifar
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    
+    ac = ActivityCollector(save_model_path, param_file, model_to_use=model_to_use)
+
+    ac.store_layer_activations_many(loader, range(len(layers_bn_afterrelu)), out_path_postfix='_bettercifar10single_afterrelu',
+                                    layer_list=layers_bn_afterrelu, if_store_labels=True,
+                                    if_store_layer_names=True, if_average_spatial=if_average_spatial, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
+    
+    
+    # TODO: CIFAR 2
+
+    #   single-head cifar 2
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    
+    ac = ActivityCollector(save_model_path, param_file, model_to_use=model_to_use)
+
+    ac.store_layer_activations_many(loader, range(len(layers_bn_afterrelu)), out_path_postfix='_bettercifar10single2_afterrelu',
+                                    layer_list=layers_bn_afterrelu, if_store_labels=True,
+                                    if_store_layer_names=True, if_average_spatial=if_average_spatial, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
+    
+    # TODO: CIFAR 3
+
+    #  single-head cifar 3
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+
+    ac = ActivityCollector(save_model_path, param_file, model_to_use=model_to_use)
+
+    ac.store_layer_activations_many(loader, range(len(layers_bn_afterrelu)), out_path_postfix='_bettercifar10single3_afterrelu',
+                                    layer_list=layers_bn_afterrelu, if_store_labels=True,
+                                    if_store_layer_names=True, if_average_spatial=if_average_spatial, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
+    
+    # TODO: CIFAR 4
+
+    #  single-head cifar 4
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+    
+    ac = ActivityCollector(save_model_path, param_file, model_to_use=model_to_use)
+
+    ac.store_layer_activations_many(loader, range(len(layers_bn_afterrelu)), out_path_postfix='_bettercifar10single4_afterrelu',
+                                    layer_list=layers_bn_afterrelu, if_store_labels=True,
+                                    if_store_layer_names=True, if_average_spatial=if_average_spatial, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
+    
+    # TODO: CIFAR 5
+
+    #  single-head cifar 5
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+
+    ac = ActivityCollector(save_model_path, param_file, model_to_use=model_to_use)
+
+    ac.store_layer_activations_many(loader, range(len(layers_bn_afterrelu)), out_path_postfix='_bettercifar10single5_afterrelu',
+                                    layer_list=layers_bn_afterrelu, if_store_labels=True,
+                                    if_store_layer_names=True, if_average_spatial=if_average_spatial, if_save_separately=False, out_path_prefix=Path('local_storage'), save_logits=True)
+
+    exit()
+
+
+
+
+
+
     
     # ac.compare_AM_images(31, 12)
     # ac.visualize_feature_distribution(range(40), 10, 'binmatr')

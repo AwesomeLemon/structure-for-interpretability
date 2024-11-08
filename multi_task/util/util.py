@@ -52,6 +52,7 @@ layers = ['layer1_0',
           'layer4_1_conv1', 'layer4_1',
           ]
 
+# this is like afterrelu, because relu is added after bn1 manually
 layers_bn = ['layer1_0',
              'layer1_1_bn1', 'layer1_1',
              'layer2_0_bn1', 'layer2_0',

@@ -4,7 +4,7 @@ import numpy as np
 from scipy import stats
 import numbers
 
-from rcot.momentchi2 import *
+from multi_task.rcot.momentchi2 import *
 
 
 def gretton_heuristic(X, subset=500):

@@ -520,7 +520,7 @@ class WassersteinCalculator(ModelExplorer):
                                                     sorted_dict_path=None,
                                                     used_neurons=None, dataset_type='celeba', if_calc_wasserstein=False,
                                                     offset=(0, 0), if_show=True, if_force_recalculate=False, if_dont_save=False,
-                                                    if_left_lim_zero=True, layer_list=layers_bn, if_plot=True, if_rename_layers=True, DistributionDifference=KolmogorovSmirnovDifference()):
+                                                    if_left_lim_zero=True, layer_list=layers_bn, if_plot=True, if_rename_layers=True, DistributionDifference=KolmogorovSmirnovDifference(), if_average_spatial=True):
         '''
 
         :param target_dict: 'all_network' OR {target_layer_idx -> [neuron_indices] OR 'all'}
@@ -594,9 +594,14 @@ class WassersteinCalculator(ModelExplorer):
             # cond_neurons = list(range(1197))
             # cond_neurons = list(range(10))
 
+        if not if_average_spatial:
+            print("want nonaveraged spatially")
+            df_val_images_activations_path = f"{df_val_images_activations_path[:-4]}_nonaveraged_spatially.pkl"
+
         if not os.path.exists(df_val_images_activations_path) or if_force_recalculate:
             if not os.path.exists(sorted_dict_path) or if_force_recalculate:
                 sorted_dict_per_layer_per_neuron = self.find_highest_activating_images(loader, dataset_type=dataset_type,
+                                                                                     if_average_spatial=if_average_spatial,
                                                                                      save_path=None, #note that I decided not to save the dict. df should be enough
                                                                                      used_neurons=used_neurons,
                                                                                      if_sort_by_path=True,
@@ -615,6 +620,10 @@ class WassersteinCalculator(ModelExplorer):
         else:
             df = pd.read_pickle(os.path.abspath(df_val_images_activations_path))
 
+        if not if_average_spatial:
+            # not compute the distribution difference, NOW just for computing the activations
+            print("want nonaveraged spatially... skipping the Distribution Difference Computation")
+            return
 
         for layer_idx, targets in target_dict.items():
             self.compute_attr_hist_for_neuron_pandas(layer_idx, targets, -1, cond_neurons, if_cond_label, df,
@@ -1042,90 +1051,176 @@ if __name__ == '__main__':
     
     # exit()
 
-    # DONE: Compute KS-Diff. for noskip cifar
+    # TODO: Compute KS-Diff. for pre-relu cifar
 
     path_prefix_mnt = Path("local_storage/recomputed_for_activations")
+    if_average_spatial = False
 
-    # DONE: Normal
+    # TODO: Prerelu
 
-    # # DONE: CIFAR 1
+    assert params['dataset'] == 'cifar10'
 
-    # #   single-head cifar
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    # TODO: CIFAR 1
+
+    #   single-head cifar
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
     
-    # wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
+    wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
 
-    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single_nonsparse_afterrelu.pkl', 'all_network',
-    #                                                'attr_hist_bettercifar10single', if_cond_label=False,
-    #                                                used_neurons='resnet_full',
-    #                                                sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single.npy',
-    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference())
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single_nonsparse_prerelu.pkl', 'all_network',
+                                                   'attr_hist_bettercifar10single_prerelu', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_prerelu_bettercifar10single.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(), if_average_spatial=if_average_spatial,
+                                                   if_left_lim_zero=False, layer_list=layers_bn_prerelu)
     
-    # # DONE: CIFAR 2
+    # TODO: CIFAR 2
 
-    # #   single-head cifar 2
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    #   single-head cifar 2
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
     
-    # wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
+    wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
 
-    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single2_nonsparse_afterrelu.pkl', 'all_network',
-    #                                                'attr_hist_bettercifar10single2', if_cond_label=False,
-    #                                                used_neurons='resnet_full',
-    #                                                sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single2.npy',
-    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference())
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single2_nonsparse_prerelu.pkl', 'all_network',
+                                                   'attr_hist_bettercifar10single2_prerelu', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_prerelu_bettercifar10single2.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(), if_average_spatial=if_average_spatial,
+                                                   if_left_lim_zero=False, layer_list=layers_bn_prerelu)
     
-    # # DONE: CIFAR 3
+    # TODO: CIFAR 3
 
-    # #  single-head cifar 3
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+    #  single-head cifar 3
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
 
-    # wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
+    wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
 
-    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single3_nonsparse_afterrelu.pkl',
-    #                                                'all_network',
-    #                                                'attr_hist_bettercifar10single3', if_cond_label=False,
-    #                                                used_neurons='resnet_full',
-    #                                                sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single3.npy',
-    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference())
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single3_nonsparse_prerelu.pkl',
+                                                   'all_network',
+                                                   'attr_hist_bettercifar10single3_prerelu', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_prerelu_bettercifar10single3.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(), if_average_spatial=if_average_spatial,
+                                                   if_left_lim_zero=False, layer_list=layers_bn_prerelu)
     
-    # # DONE: CIFAR 4
+    # TODO: CIFAR 4
 
-    # #  single-head cifar 4
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+    #  single-head cifar 4
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
     
-    # wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
+    wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
     
-    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single4_nonsparse_afterrelu.pkl',
-    #                                                'all_network',
-    #                                                'attr_hist_bettercifar10single4', if_cond_label=False,
-    #                                                used_neurons='resnet_full',
-    #                                                sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single4.npy',
-    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference())
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single4_nonsparse_prerelu.pkl',
+                                                   'all_network',
+                                                   'attr_hist_bettercifar10single4_prerelu', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_prerelu_bettercifar10single4.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(), if_average_spatial=if_average_spatial,
+                                                   if_left_lim_zero=False, layer_list=layers_bn_prerelu)
     
-    # # DONE: CIFAR 5
+    # TODO: CIFAR 5
 
-    # #  single-head cifar 5
-    # save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
-    # param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+    #  single-head cifar 5
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
     
-    # wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
+    wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
     
-    # wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/     'bettercifar10single5_nonsparse_afterrelu.pkl',
-    #                                                'all_network',
-    #                                                'attr_hist_bettercifar10single5', if_cond_label=False,
-    #                                                used_neurons='resnet_full',
-    #                                                sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single5.npy',
-    #                                                if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference())
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single5_nonsparse_prerelu.pkl',
+                                                   'all_network',
+                                                   'attr_hist_bettercifar10single5_prerelu', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_prerelu_bettercifar10single5.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(), if_average_spatial=if_average_spatial,
+                                                   if_left_lim_zero=False, layer_list=layers_bn_prerelu)
 
-    # TODO: Noskip
+
+    # TODO: Normal
+
+    # TODO: CIFAR 1
+
+    #   single-head cifar
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_33_on_September_16/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    
+    wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
+
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single_nonsparse_afterrelu.pkl', 'all_network',
+                                                   'attr_hist_bettercifar10single', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(), if_average_spatial=if_average_spatial)
+    
+    # TODO: CIFAR 2
+
+    #   single-head cifar 2
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_10_on_September_25/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd1bias_fc_batch128_weightdecay3e-4_singletask.json'
+    
+    wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
+
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single2_nonsparse_afterrelu.pkl', 'all_network',
+                                                   'attr_hist_bettercifar10single2', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single2.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(), if_average_spatial=if_average_spatial)
+    
+    # TODO: CIFAR 3
+
+    #  single-head cifar 3
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/11_25_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+
+    wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
+
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single3_nonsparse_afterrelu.pkl',
+                                                   'all_network',
+                                                   'attr_hist_bettercifar10single3', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single3.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(), if_average_spatial=if_average_spatial)
+    
+    # TODO: CIFAR 4
+
+    #  single-head cifar 4
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_56_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+    
+    wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
+    
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single4_nonsparse_afterrelu.pkl',
+                                                   'all_network',
+                                                   'attr_hist_bettercifar10single4', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single4.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(), if_average_spatial=if_average_spatial)
+    
+    # TODO: CIFAR 5
+
+    #  single-head cifar 5
+    save_model_path = r'/mnt/raid/data/chebykin/saved_models/14_34_on_October_08/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18|width_mul=1|weight_decay=0.000_240_model.pkl'
+    param_file = 'params/binmatr2_cifar_sgd001bias_finetune_batch128_singletask.json'
+    
+    wc = WassersteinCalculator(save_model_path, param_file, model_to_use)
+    
+    wc.compute_attr_hist_for_neuron_pandas_wrapper(loader, path_prefix_mnt/'bettercifar10single5_nonsparse_afterrelu.pkl',
+                                                   'all_network',
+                                                   'attr_hist_bettercifar10single5', if_cond_label=False,
+                                                   used_neurons='resnet_full',
+                                                   sorted_dict_path=path_prefix_mnt/'img_paths_most_activating_sorted_dict_paths_afterrelu_bettercifar10single5.npy',
+                                                   if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(), if_average_spatial=if_average_spatial)
+
+    exit()
+
+    # DONE: Noskip
 
     param_file = 'params/binmatr2_cifar_sgd1bias_fc_noskip_batch128_weightdecay3e-4_singletask.json'
 
-    # TODO: CIFAR Noskip 1
+    # DONE: CIFAR Noskip 1
 
     save_model_path = r'/mnt/raid/data/chebykin/saved_models/15_31_on_October_01/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_240_model.pkl'
     
@@ -1138,7 +1233,7 @@ if __name__ == '__main__':
                                                    if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(),
                                                    if_force_recalculate=True)
     
-    # TODO: CIFAR Noskip 2
+    # DONE: CIFAR Noskip 2
 
     save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_10_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
     
@@ -1151,7 +1246,7 @@ if __name__ == '__main__':
                                                    if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(),
                                                    if_force_recalculate=True)
     
-    # TODO: CIFAR Noskip 3
+    # DONE: CIFAR Noskip 3
 
     save_model_path = r'/mnt/raid/data/chebykin/saved_models/12_15_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
 
@@ -1165,7 +1260,7 @@ if __name__ == '__main__':
                                                    if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(),
                                                    if_force_recalculate=True)
     
-    # TODO: CIFAR Noskip 4
+    # DONE: CIFAR Noskip 4
 
     save_model_path = r'/mnt/raid/data/chebykin/saved_models/13_11_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
     
@@ -1179,7 +1274,7 @@ if __name__ == '__main__':
                                                    if_calc_wasserstein=True, offset=(0.5, 0.5), dataset_type='cifar', if_show=False, if_plot=False, DistributionDifference=KolmogorovSmirnovDifference(),
                                                    if_force_recalculate=True)
     
-    # TODO: CIFAR Noskip 5
+    # DONE: CIFAR Noskip 5
 
     save_model_path = r'/mnt/raid/data/chebykin/saved_models/13_15_on_December_22/optimizer=SGD|batch_size=128|lr=0.1|connectivities_lr=0.0|chunks=[64|_64|_64|_128|_128|_128|_128|_256|_256|_256|_256|_512|_512|_512|_512]|architecture=binmatr2_resnet18_noskip|width_mul=1|weight_deca_120_model.pkl'
     

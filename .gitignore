@@ -19,3 +19,4 @@ stored_activations
 .vscode/launch.json
 multi_task/util/try_collect_activations.py
 list_attr_celeba.txt
+.DS_Store
